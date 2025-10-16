@@ -1,5 +1,8 @@
 import openhands.cli.suppress_warnings  # noqa: F401  # isort: skip
 
+import json
+import re
+from datetime import datetime
 import asyncio
 import logging
 import os
@@ -436,10 +439,39 @@ async def run_session(
 
     await cleanup_session(loop, agent, runtime, controller)
 
-    if exit_reason == ExitReason.INTENTIONAL:
-        print_formatted_text('✅ Session terminated successfully.\n')
-    else:
-        print_formatted_text(f'⚠️ Session was interrupted: {exit_reason.value}\n')
+    # Save trajectory in CLI mode if configured (mirrors headless behavior)
+    if getattr(config, "save_trajectory_path", None):
+        try:
+            # Collect identifying info
+            agent_name = config.default_agent or "agent"
+            llm_model = config.get_llm_config().model or "llm"
+            llm_name = re.sub(r'[^a-zA-Z0-9_-]', '', llm_model.split("/")[-1])
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            filename = f"{agent_name}_{llm_name}_{timestamp}.json"
+            # If it's a directory, save as <sid>.json; otherwise use it as a file path
+            if os.path.isdir(config.save_trajectory_path):
+                file_path = os.path.join(config.save_trajectory_path, filename)
+            else:
+                file_path = config.save_trajectory_path
+
+            # Ensure directory exists (handle no-directory file paths too)
+            dirpath = os.path.dirname(file_path) or "."
+            os.makedirs(dirpath, exist_ok=True)
+
+            histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(histories, f, indent=4)
+
+            logger.info(f"Saved trajectory to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save trajectory: {e}")
+
+
+        if exit_reason == ExitReason.INTENTIONAL:
+            print_formatted_text('✅ Session terminated successfully.\n')
+        else:
+            print_formatted_text(f'⚠️ Session was interrupted: {exit_reason.value}\n')
 
     return new_session_requested
 

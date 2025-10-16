@@ -1,3 +1,5 @@
+run_openhands_cli.sh
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

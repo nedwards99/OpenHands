@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import os
 import time
 import traceback
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from openhands.security.analyzer import SecurityAnalyzer
@@ -158,6 +159,12 @@ class AgentController:
         self.headless_mode = headless_mode
         self.is_delegate = is_delegate
         self.conversation_stats = conversation_stats
+
+        # Track intent delegation
+        self._intent_delegate_run = False
+        self._intent_delegate_pending: MessageAction | None = None
+        self._intent_delegate_ready: bool = False
+        self._intent_delegate_processing: bool = False
 
         # the event stream must be set before maybe subscribing to it
         self.event_stream = event_stream
@@ -500,13 +507,20 @@ class AgentController:
         elif isinstance(action, AgentDelegateAction):
             await self.start_delegate(action)
             assert self.delegate is not None
-            # Post a MessageAction with the task for the delegate
-            if 'task' in action.inputs:
+            message_for_delegate: MessageAction | None = None
+            if 'prompt' in action.inputs and action.inputs['prompt']:
+                message_for_delegate = MessageAction(content=action.inputs['prompt'])
+            elif 'task' in action.inputs and action.inputs['task']:
+                message_for_delegate = MessageAction(
+                    content='TASK: ' + action.inputs['task']
+                )
+
+            if message_for_delegate is not None:
+                await self.delegate.set_agent_state_to(AgentState.RUNNING)
                 self.event_stream.add_event(
-                    MessageAction(content='TASK: ' + action.inputs['task']),
+                    message_for_delegate,
                     EventSource.USER,
                 )
-                await self.delegate.set_agent_state_to(AgentState.RUNNING)
             return
 
         elif isinstance(action, AgentFinishAction):
@@ -540,6 +554,26 @@ class AgentController:
 
             self._pending_action = None
 
+            if isinstance(observation, AgentDelegateObservation):
+                self._intent_delegate_ready = True
+                reply_content = ''
+                if isinstance(observation.outputs, dict):
+                    reply_content = observation.outputs.get('user_response', '') or ''
+
+                if reply_content.strip():
+                    self.event_stream.add_event(
+                        MessageAction(content=reply_content, wait_for_response=False),
+                        EventSource.USER,
+                    )
+                elif self._intent_delegate_pending is not None:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.get_event_loop()
+                    loop.create_task(self._handle_message_action(self._intent_delegate_pending))
+                    self._intent_delegate_pending = None
+                    self._intent_delegate_ready = False
+
             if self.state.agent_state == AgentState.USER_CONFIRMED:
                 await self.set_agent_state_to(AgentState.RUNNING)
             if self.state.agent_state == AgentState.USER_REJECTED:
@@ -552,6 +586,22 @@ class AgentController:
         Args:
             action (MessageAction): The message action to handle.
         """
+        if (
+            not self._intent_delegate_processing
+            and self._intent_delegate_pending is not None
+            and self._intent_delegate_ready
+            and action.source == EventSource.USER
+            and action.id != self._intent_delegate_pending.id
+        ):
+            self._intent_delegate_processing = True
+            pending_message = self._intent_delegate_pending
+            self._intent_delegate_pending = None
+            self._intent_delegate_ready = False
+            try:
+                await self._handle_message_action(pending_message)
+            finally:
+                self._intent_delegate_processing = False
+
         if action.source == EventSource.USER:
             # Use info level if LOG_ALL_EVENTS is set
             log_level = (
@@ -568,6 +618,28 @@ class AgentController:
             is_first_user_message = (
                 action.id == first_user_message.id if first_user_message else False
             )
+
+            # Delegate to Intent Agent on first message
+            if (
+                not self.is_delegate
+                and self.agent.name == 'ClarifyAgent'
+                and is_first_user_message
+                and not self._intent_delegate_run
+            ):
+                self._intent_delegate_run = True
+                self._intent_delegate_pending = action
+                self._intent_delegate_ready = False
+                delegate_action = AgentDelegateAction(
+                    agent='IntentAgent',
+                    inputs={
+                        'prompt': action.content,
+                        'message_id': action.id,
+                    },
+                )
+                self._pending_action = delegate_action
+                self.event_stream.add_event(delegate_action, EventSource.AGENT)
+                return
+
             recall_type = (
                 RecallType.WORKSPACE_CONTEXT
                 if is_first_user_message
@@ -627,6 +699,9 @@ class AgentController:
         # reset the pending action, this will be called when the agent is STOPPED or ERROR
         self._pending_action = None
         self.agent.reset()
+        self._intent_delegate_pending = None
+        self._intent_delegate_ready = False
+        self._intent_delegate_processing = False
 
     async def set_agent_state_to(self, new_state: AgentState) -> None:
         """Updates the agent's state and handles side effects. Can emit events to the event stream.
@@ -709,8 +784,19 @@ class AgentController:
         agent_cls: type[Agent] = Agent.get_cls(action.agent)
         agent_config = self.agent_configs.get(action.agent, self.agent.config)
         # Make sure metrics are shared between parent and child for global accumulation
+        shared_kwargs: dict[str, Any] = {}
+        if hasattr(self.agent, 'condenser'):
+            try:
+                init_params = inspect.signature(agent_cls.__init__).parameters
+            except (TypeError, ValueError):
+                init_params = {}
+            if 'shared_condenser' in init_params:
+                shared_kwargs['shared_condenser'] = getattr(self.agent, 'condenser')
+
         delegate_agent = agent_cls(
-            config=agent_config, llm_registry=self.agent.llm_registry
+            config=agent_config,
+            llm_registry=self.agent.llm_registry,
+            **shared_kwargs,
         )
 
         # Take a snapshot of the current metrics before starting the delegate
@@ -805,6 +891,9 @@ class AgentController:
 
         # emit the delegate result observation
         obs = AgentDelegateObservation(outputs=delegate_outputs, content=content)
+
+        delegate_action_id = getattr(self._pending_action, 'id', None)
+        obs._cause = delegate_action_id
 
         # associate the delegate action with the initiating tool call
         for event in reversed(self.state.history):

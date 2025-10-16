@@ -1,21 +1,16 @@
-"""This file contains the function calling implementation for different actions.
-
-This is similar to the functionality of `CodeActResponseParser`.
-"""
-
 import json
 
-from litellm import (
-    ModelResponse,
-)
+from litellm import ModelResponse
 
-from openhands.agenthub.codewrite_agent.tools import (
+from openhands.agenthub.clarify_agent.tools import (
     BrowserTool,
+    ClarifyTool,
+    CondensationRequestTool,
+    IntentAgentDelegateTool,
     FinishTool,
     IPythonTool,
     LLMBasedFileEditTool,
     ThinkTool,
-    WebReadTool,
     create_cmd_run_tool,
     create_str_replace_editor_tool,
 )
@@ -26,23 +21,21 @@ from openhands.core.exceptions import (
 from openhands.core.logger import openhands_logger as logger
 from openhands.events.action import (
     Action,
+    ActionSecurityRisk,
     AgentDelegateAction,
     AgentFinishAction,
     AgentThinkAction,
     BrowseInteractiveAction,
-    BrowseURLAction,
     CmdRunAction,
     FileEditAction,
     FileReadAction,
     IPythonRunCellAction,
     MessageAction,
+    TaskTrackingAction,
 )
-from openhands.events.action.mcp import MCPAction
-from openhands.events.event import FileEditSource, FileReadSource
 from openhands.events.tool import ToolCallMetadata
-from openhands.mcp import MCPClientTool
-
-
+from openhands.events.event import FileEditSource, FileReadSource
+from openhands.agenthub.clarify_agent.tools.security_utils import RISK_LEVELS
 def combine_thought(action: Action, thought: str) -> Action:
     if not hasattr(action, 'thought'):
         return action
@@ -53,11 +46,89 @@ def combine_thought(action: Action, thought: str) -> Action:
     return action
 
 
-def response_to_actions(response: ModelResponse) -> list[Action]:
+def set_security_risk(action: Action, arguments: dict) -> None:
+    """Set the security risk level for the action."""
+
+    # Set security_risk attribute if provided
+    if 'security_risk' in arguments:
+        if arguments['security_risk'] in RISK_LEVELS:
+            if hasattr(action, 'security_risk'):
+                action.security_risk = getattr(
+                    ActionSecurityRisk, arguments['security_risk']
+                )
+        else:
+            logger.warning(f'Invalid security_risk value: {arguments["security_risk"]}')
+
+def _collect_text_content(message_content) -> str:
+    if isinstance(message_content, str):
+        return message_content
+    if isinstance(message_content, list):
+        return ''.join(
+            chunk.get('text', '') for chunk in message_content if chunk.get('type') == 'text'
+        )
+    return ''
+
+
+def _render_clarify_message(arguments: dict) -> str:
+    questions = arguments.get('questions', [])
+    preamble = arguments.get('message', '')
+    checklist = arguments.get('checklist', [])
+
+    lines: list[str] = []
+
+    if preamble:
+        lines.append(f'❓ {preamble.strip()}\n')
+    else:
+        lines.append('❓ I see a few open questions before we can proceed:\n')
+
+    if checklist:
+        lines.append('📋 **Requirements Snapshot**')
+        lines.append('```')
+        max_label = max(len(item.get('label', '')) for item in checklist)
+        max_status = max(len(item.get('status', '')) for item in checklist)
+
+        lines.append(f"{'Requirement':<{max_label}} | {'Status':<{max_status}} | Notes")
+        lines.append(f"{'-' * max_label}-+-{'-' * max_status}-+------")
+
+        status_icons = {'OK': '✅', 'UNKNOWN': '❓', 'MISSING': '❌', 'N/A': '⊘'}
+
+        for item in checklist:
+            label = item.get('label', '')
+            status = item.get('status', 'UNKNOWN')
+            value = item.get('value', '')
+            emoji = status_icons.get(status, '?')
+            lines.append(f"{label:<{max_label}} | {emoji} {status:<{max_status-2}} | {value}")
+        lines.append('```')
+        lines.append('')
+
+    if questions:
+        lines.append('### Clarifying Questions')
+        for idx, question in enumerate(questions, 1):
+            text = question.get('text', '')
+            options = question.get('options')
+            default = question.get('default')
+            option_suffix = ''
+            if options:
+                option_suffix += f" options: {', '.join(options)}"
+            if default:
+                option_suffix += f" (recommended: {default})"
+            lines.append(f'{idx}. {text}{option_suffix}')
+
+    return '\n'.join(lines).strip()
+
+
+def response_to_actions(
+    response: ModelResponse, mcp_tool_names: list[str] | None = None
+) -> list[Action]:
+    logger.debug('Parsing IntentAgent model response for tool calls.')
     actions: list[Action] = []
+
     assert len(response.choices) == 1, 'Only one choice is supported for now'
+
+
     choice = response.choices[0]
     assistant_msg = choice.message
+
     if hasattr(assistant_msg, 'tool_calls') and assistant_msg.tool_calls:
         # Check if there's assistant_msg.content. If so, add it to the thought
         thought = ''
@@ -71,72 +142,47 @@ def response_to_actions(response: ModelResponse) -> list[Action]:
         # Process each tool call to OpenHands action
         for i, tool_call in enumerate(assistant_msg.tool_calls):
             action: Action
-            logger.debug(f'Tool call in function_calling.py: {tool_call}')
+            logger.debug(f'IntentAgent tool call: {tool_call}')
             try:
                 arguments = json.loads(tool_call.function.arguments)
+                logger.debug(f'Intent tool call {tool_call.function.name}: {arguments}')
             except json.decoder.JSONDecodeError as e:
-                raise RuntimeError(
+                raise FunctionCallValidationError(
                     f'Failed to parse tool call arguments: {tool_call.function.arguments}'
                 ) from e
-
-            # ================================================
-            # CmdRunTool (Bash)
-            # ================================================
 
             if tool_call.function.name == create_cmd_run_tool()['function']['name']:
                 if 'command' not in arguments:
                     raise FunctionCallValidationError(
                         f'Missing required argument "command" in tool call {tool_call.function.name}'
                     )
-                if any((s in arguments['command']) for s in ['python ', 'pip ', 'python3 ', 'pip3 ']):
-                    raise FunctionCallValidationError(
-                        f'Executing Python code or installing packages is not allowed.'
-                    )
                 # convert is_input to boolean
                 is_input = arguments.get('is_input', 'false') == 'true'
                 action = CmdRunAction(command=arguments['command'], is_input=is_input)
 
-            # ================================================
-            # IPythonTool (Jupyter)
-            # ================================================
-            elif tool_call.function.name == IPythonTool['function']['name']:
-                if 'code' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "code" in tool call {tool_call.function.name}'
-                    )
-                action = IPythonRunCellAction(code=arguments['code'])
-            elif tool_call.function.name == 'delegate_to_browsing_agent':
-                action = AgentDelegateAction(
-                    agent='BrowsingAgent',
-                    inputs=arguments,
-                )
+                # Set hard timeout if provided
+                if 'timeout' in arguments:
+                    try:
+                        action.set_hard_timeout(float(arguments['timeout']))
+                    except ValueError as e:
+                        raise FunctionCallValidationError(
+                            f"Invalid float passed to 'timeout' argument: {arguments['timeout']}"
+                        ) from e
+                set_security_risk(action, arguments)
 
-            # ================================================
-            # AgentFinishAction
-            # ================================================
+            elif tool_call.function.name == ClarifyTool['function']['name']:
+                content = _render_clarify_message(arguments)
+                wait_for_response = arguments.get('wait_for_response', True)
+                if isinstance(wait_for_response, str):
+                    wait_for_response = wait_for_response.lower() == 'true'
+
+                action = MessageAction(
+                    content=content or 'I have a few clarification questions.',
+                    wait_for_response=wait_for_response,
+                )
             elif tool_call.function.name == FinishTool['function']['name']:
                 action = AgentFinishAction(
                     final_thought=arguments.get('message', ''),
-                    task_completed=arguments.get('task_completed', None),
-                )
-
-            # ================================================
-            # LLMBasedFileEditTool (LLM-based file editor, deprecated)
-            # ================================================
-            elif tool_call.function.name == LLMBasedFileEditTool['function']['name']:
-                if 'path' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "path" in tool call {tool_call.function.name}'
-                    )
-                if 'content' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "content" in tool call {tool_call.function.name}'
-                    )
-                action = FileEditAction(
-                    path=arguments['path'],
-                    content=arguments['content'],
-                    start=arguments.get('start', 1),
-                    end=arguments.get('end', -1),
                 )
             elif (
                 tool_call.function.name
@@ -166,46 +212,37 @@ def response_to_actions(response: ModelResponse) -> list[Action]:
                     if 'view_range' in other_kwargs:
                         # Remove view_range from other_kwargs since it is not needed for FileEditAction
                         other_kwargs.pop('view_range')
+
+                    # Filter out unexpected arguments
+                    valid_kwargs_for_editor = {}
+                    # Get valid parameters from the str_replace_editor tool definition
+                    str_replace_editor_tool = create_str_replace_editor_tool()
+                    valid_params = set(
+                        str_replace_editor_tool['function']['parameters'][
+                            'properties'
+                        ].keys()
+                    )
+
+                    for key, value in other_kwargs.items():
+                        if key in valid_params:
+                            # security_risk is valid but should NOT be part of editor kwargs
+                            if key != 'security_risk':
+                                valid_kwargs_for_editor[key] = value
+                        else:
+                            raise FunctionCallValidationError(
+                                f'Unexpected argument {key} in tool call {tool_call.function.name}. Allowed arguments are: {valid_params}'
+                            )
+
                     action = FileEditAction(
                         path=path,
                         command=command,
                         impl_source=FileEditSource.OH_ACI,
-                        **other_kwargs,
+                        **valid_kwargs_for_editor,
                     )
-            # ================================================
-            # AgentThinkAction
-            # ================================================
+
+                set_security_risk(action, arguments)
             elif tool_call.function.name == ThinkTool['function']['name']:
                 action = AgentThinkAction(thought=arguments.get('thought', ''))
-
-            # ================================================
-            # BrowserTool
-            # ================================================
-            elif tool_call.function.name == BrowserTool['function']['name']:
-                if 'code' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "code" in tool call {tool_call.function.name}'
-                    )
-                action = BrowseInteractiveAction(browser_actions=arguments['code'])
-
-            # ================================================
-            # WebReadTool (simplified browsing)
-            # ================================================
-            elif tool_call.function.name == WebReadTool['function']['name']:
-                if 'url' not in arguments:
-                    raise FunctionCallValidationError(
-                        f'Missing required argument "url" in tool call {tool_call.function.name}'
-                    )
-                action = BrowseURLAction(url=arguments['url'])
-
-            # ================================================
-            # McpAction (MCP)
-            # ================================================
-            elif tool_call.function.name.endswith(MCPClientTool.postfix()):
-                action = MCPAction(
-                    name=tool_call.function.name.removesuffix(MCPClientTool.postfix()),
-                    arguments=tool_call.function.arguments,
-                )
             else:
                 raise FunctionCallNotExistsError(
                     f'Tool {tool_call.function.name} is not registered. (arguments: {arguments}). Please check the tool name and retry with an existing tool.'

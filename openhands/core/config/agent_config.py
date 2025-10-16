@@ -74,9 +74,17 @@ class AgentConfig(BaseModel):
         When enable_plan_mode is True, automatically uses the long horizon system prompt
         unless a custom system_prompt_filename was explicitly set (not the default).
         """
+        # if self.enable_plan_mode and self.system_prompt_filename == 'system_prompt.j2':
+        #     return 'system_prompt_long_horizon.j2'
+        # return self.system_prompt_filename
+
         if self.enable_plan_mode and self.system_prompt_filename == 'system_prompt.j2':
-            return 'system_prompt_long_horizon.j2'
-        return self.system_prompt_filename
+            chosen = 'system_prompt_long_horizon.j2'
+        else:
+            chosen = self.system_prompt_filename
+
+        logger.info(f"Using system prompt template: {chosen}")
+        return chosen
 
     @classmethod
     def from_toml_section(cls, data: dict) -> dict[str, AgentConfig]:

@@ -249,6 +249,19 @@ class ConversationMemory:
                     )
                 ]
 
+            if isinstance(action, AgentDelegateAction) and tool_metadata is None:
+                summary = action.inputs.get('prompt') if isinstance(action.inputs, dict) else None
+                if summary:
+                    text = f'Delegating to {action.agent}: {summary}'
+                else:
+                    text = f'Delegating to {action.agent}'
+                return [
+                    Message(
+                        role='assistant',
+                        content=[TextContent(text=text)],
+                    )
+                ]
+
             assert tool_metadata is not None, (
                 'Tool call metadata should NOT be None when function calling is enabled for agent actions. Action: '
                 + str(action)
