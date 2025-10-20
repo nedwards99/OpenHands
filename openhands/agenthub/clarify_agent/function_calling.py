@@ -109,6 +109,10 @@ def response_to_actions(
                     raise FunctionCallValidationError(
                         f'Missing required argument "command" in tool call {tool_call.function.name}'
                     )
+                if any((s in arguments['command']) for s in ['python ', 'pip ', 'python3 ', 'pip3 ']):
+                    raise FunctionCallValidationError(
+                        f'Executing Python code or installing packages is not allowed.'
+                    )
                 # convert is_input to boolean
                 is_input = arguments.get('is_input', 'false') == 'true'
                 action = CmdRunAction(command=arguments['command'], is_input=is_input)
