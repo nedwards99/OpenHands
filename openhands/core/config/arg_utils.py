@@ -192,6 +192,37 @@ def get_cli_parser() -> argparse.ArgumentParser:
     add_common_arguments(cli_parser)
 
     cli_parser.add_argument(
+        '--task-name',
+        type=str,
+        default=None,
+        help='Identifier for the current task (used for organizing outputs).',
+    )
+    cli_parser.add_argument(
+        '--instructions-type',
+        type=str,
+        default=None,
+        help='Instruction coverage level to load (e.g., full, missing, none).',
+    )
+    cli_parser.add_argument(
+        '--instructions-base',
+        type=str,
+        default=None,
+        help='Base directory containing task instruction variants.',
+    )
+    cli_parser.add_argument(
+        '--prompt-type',
+        type=str,
+        default=None,
+        help='Prompt variant under the task (e.g., baseline, ablation).',
+    )
+    cli_parser.add_argument(
+        '--instructions-file',
+        type=str,
+        default=None,
+        help='Instruction file name to read within the selected instruction type directory (default: instructions.md).',
+    )
+
+    cli_parser.add_argument(
         '--override-cli-mode',
         help='Override the default settings for CLI mode',
         type=bool,

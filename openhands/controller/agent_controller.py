@@ -586,21 +586,21 @@ class AgentController:
         Args:
             action (MessageAction): The message action to handle.
         """
-        if (
-            not self._intent_delegate_processing
-            and self._intent_delegate_pending is not None
-            and self._intent_delegate_ready
-            and action.source == EventSource.USER
-            and action.id != self._intent_delegate_pending.id
-        ):
-            self._intent_delegate_processing = True
-            pending_message = self._intent_delegate_pending
-            self._intent_delegate_pending = None
-            self._intent_delegate_ready = False
-            try:
-                await self._handle_message_action(pending_message)
-            finally:
-                self._intent_delegate_processing = False
+        # if (
+        #     not self._intent_delegate_processing
+        #     and self._intent_delegate_pending is not None
+        #     and self._intent_delegate_ready
+        #     and action.source == EventSource.USER
+        #     and action.id != self._intent_delegate_pending.id
+        # ):
+        #     self._intent_delegate_processing = True
+        #     pending_message = self._intent_delegate_pending
+        #     self._intent_delegate_pending = None
+        #     self._intent_delegate_ready = False
+        #     try:
+        #         await self._handle_message_action(pending_message)
+        #     finally:
+        #         self._intent_delegate_processing = False
 
         if action.source == EventSource.USER:
             # Use info level if LOG_ALL_EVENTS is set
@@ -620,25 +620,25 @@ class AgentController:
             )
 
             # Delegate to Intent Agent on first message
-            if (
-                not self.is_delegate
-                and self.agent.name == 'ClarifyAgent'
-                and is_first_user_message
-                and not self._intent_delegate_run
-            ):
-                self._intent_delegate_run = True
-                self._intent_delegate_pending = action
-                self._intent_delegate_ready = False
-                delegate_action = AgentDelegateAction(
-                    agent='IntentAgent',
-                    inputs={
-                        'prompt': action.content,
-                        'message_id': action.id,
-                    },
-                )
-                self._pending_action = delegate_action
-                self.event_stream.add_event(delegate_action, EventSource.AGENT)
-                return
+            # if (
+            #     not self.is_delegate
+            #     and self.agent.name == 'ClarifyAgent'
+            #     and is_first_user_message
+            #     and not self._intent_delegate_run
+            # ):
+            #     self._intent_delegate_run = True
+            #     self._intent_delegate_pending = action
+            #     self._intent_delegate_ready = False
+            #     delegate_action = AgentDelegateAction(
+            #         agent='IntentAgent',
+            #         inputs={
+            #             'prompt': action.content,
+            #             'message_id': action.id,
+            #         },
+            #     )
+            #     self._pending_action = delegate_action
+            #     self.event_stream.add_event(delegate_action, EventSource.AGENT)
+            #     return
 
             recall_type = (
                 RecallType.WORKSPACE_CONTEXT
@@ -699,9 +699,10 @@ class AgentController:
         # reset the pending action, this will be called when the agent is STOPPED or ERROR
         self._pending_action = None
         self.agent.reset()
-        self._intent_delegate_pending = None
-        self._intent_delegate_ready = False
-        self._intent_delegate_processing = False
+
+        # self._intent_delegate_pending = None
+        # self._intent_delegate_ready = False
+        # self._intent_delegate_processing = False
 
     async def set_agent_state_to(self, new_state: AgentState) -> None:
         """Updates the agent's state and handles side effects. Can emit events to the event stream.

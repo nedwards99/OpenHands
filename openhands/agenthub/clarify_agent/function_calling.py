@@ -252,61 +252,11 @@ def response_to_actions(
             # ================================================
             # ClarifyTool -> MessageAction
             # ================================================
-            # elif tool_call.function.name == ClarifyTool['function']['name']:
-            #     if 'message' not in arguments:
-            #         raise FunctionCallValidationError(
-            #             f'Missing required argument "message" in tool call {tool_call.function.name}'
-            #         )
-            #     wait_for_response = arguments.get('wait_for_response', True)
-            #     if isinstance(wait_for_response, str):
-            #         wait_for_response = wait_for_response.lower() == 'true'
-            #     action = MessageAction(
-            #         content=arguments['message'],
-            #         wait_for_response=wait_for_response,
-            #     )
-            #     set_security_risk(action, arguments)
-
-            #v2
-            # elif tool_call.function.name == ClarifyTool['function']['name']:
-            #     # Render a nice message from questions/checklist
-            #     q = arguments.get('questions', [])
-            #     pre = arguments.get('message', '')
-            #     wait = arguments.get('wait_for_response', True)
-            #     checklist = arguments.get('checklist', [])
-
-            #     # Simple renderer (adjust formatting to your UI)
-            #     lines = []
-            #     if pre:
-            #         lines.append(pre.strip())
-            #     if checklist:
-            #         lines.append("### Requirements Checklist")
-            #         for item in checklist:
-            #             lbl = item.get('label','')
-            #             st = item.get('status','UNKNOWN')
-            #             val = item.get('value','')
-            #             lines.append(f"- {lbl}: [{st}] {val}")
-            #     if q:
-            #         lines.append("### Clarifying Questions")
-            #         for i, item in enumerate(q, 1):
-            #             opts = item.get('options')
-            #             default = item.get('default')
-            #             suffix = []
-            #             if opts:
-            #                 suffix.append(f"options: {', '.join(opts)}")
-            #             if default:
-            #                 suffix.append(f"default: {default}")
-            #             suffix_str = f" ({'; '.join(suffix)})" if suffix else ""
-            #             lines.append(f"{i}) {item.get('text')}{suffix_str}")
-
-            #     content = "\n".join(lines).strip() or "I have a few clarification questions."
-            #     action = MessageAction(content=content, wait_for_response=wait)
-                #set_security_risk(action, arguments)
-
             elif tool_call.function.name == ClarifyTool['function']['name']:
                 questions = arguments.get('questions', [])
                 preamble = arguments.get('message', '')
                 wait = arguments.get('wait_for_response', True)
-                checklist = arguments.get('checklist', [])
+                # checklist = arguments.get('checklist', [])
 
                 # Build a nicely formatted message
                 lines = []
@@ -318,34 +268,34 @@ def response_to_actions(
                     lines.append("❓ I need some clarification before proceeding:\n")
 
                 # Checklist (if provided) - use table format
-                if checklist:
-                    lines.append("📋 **Current Requirements Status**")
-                    lines.append("```")
-                    # Calculate column widths
-                    max_label = max(len(item.get('label', '')) for item in checklist)
-                    max_status = max(len(item.get('status', '')) for item in checklist)
-                    max_value = max(len(item.get('value', '')) for item in checklist)
+                # if checklist:
+                #     lines.append("📋 **Current Requirements Status**")
+                #     lines.append("```")
+                #     # Calculate column widths
+                #     max_label = max(len(item.get('label', '')) for item in checklist)
+                #     max_status = max(len(item.get('status', '')) for item in checklist)
+                #     max_value = max(len(item.get('value', '')) for item in checklist)
 
-                    # Header
-                    lines.append(f"{'Requirement':<{max_label}} | {'Status':<{max_status}} | Value")
-                    lines.append(f"{'-' * max_label}-+-{'-' * max_status}-+{'-' * 6}")
+                #     # Header
+                #     lines.append(f"{'Requirement':<{max_label}} | {'Status':<{max_status}} | Value")
+                #     lines.append(f"{'-' * max_label}-+-{'-' * max_status}-+{'-' * 6}")
 
-                    # Items
-                    for item in checklist:
-                        label = item.get('label', '')[:max_label]
-                        status = item.get('status', 'UNKNOWN')
-                        value = item.get('value', '')
+                #     # Items
+                #     for item in checklist:
+                #         label = item.get('label', '')[:max_label]
+                #         status = item.get('status', 'UNKNOWN')
+                #         value = item.get('value', '')
 
-                        # Add emoji indicators
-                        status_emoji = {
-                            'OK': '✅',
-                            'UNKNOWN': '❓',
-                            'MISSING': '❌',
-                            'N/A': '⊘'
-                        }.get(status, '?')
+                #         # Add emoji indicators
+                #         status_emoji = {
+                #             'OK': '✅',
+                #             'UNKNOWN': '❓',
+                #             'MISSING': '❌',
+                #             'N/A': '⊘'
+                #         }.get(status, '?')
 
-                        lines.append(f"{label:<{max_label}} | {status_emoji} {status:<{max_status-2}} | {value}")
-                    lines.append("```\n")
+                #         lines.append(f"{label:<{max_label}} | {status_emoji} {status:<{max_status-2}} | {value}")
+                #     lines.append("```\n")
 
                 # Questions - numbered list with clear formatting
                 if questions:
@@ -356,10 +306,9 @@ def response_to_actions(
                         text = q.get('text', '')
                         options = q.get('options', [])
                         default = q.get('default', '')
-                        required = q.get('required', True)
 
                         # Question number and text
-                        req_marker = "🔴" if required else "🟡"
+                        req_marker = "🔴"
                         lines.append(f"{req_marker} **{i}. {text}**")
 
                         # Options (if provided)

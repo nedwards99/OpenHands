@@ -49,6 +49,7 @@ from openhands.cli.vscode_extension import attempt_vscode_extension_install
 from openhands.controller import AgentController
 from openhands.controller.agent import Agent
 from openhands.core.config import (
+    ExtendedConfig,
     OpenHandsConfig,
     setup_config_from_args,
 )
@@ -449,15 +450,50 @@ async def run_session(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             filename = f"{agent_name}_{llm_name}_{timestamp}.json"
-            # If it's a directory, save as <sid>.json; otherwise use it as a file path
-            if os.path.isdir(config.save_trajectory_path):
-                file_path = os.path.join(config.save_trajectory_path, filename)
-            else:
-                file_path = config.save_trajectory_path
+            base_path = os.path.expanduser(config.save_trajectory_path)
+            path_ext = os.path.splitext(base_path)[1]
+            treat_as_directory = not path_ext or os.path.isdir(base_path)
+            if os.path.exists(base_path) and not os.path.isdir(base_path):
+                treat_as_directory = False
 
-            # Ensure directory exists (handle no-directory file paths too)
-            dirpath = os.path.dirname(file_path) or "."
-            os.makedirs(dirpath, exist_ok=True)
+            if treat_as_directory:
+                def _slug_or_default(value: str | None, fallback: str) -> str:
+                    if not value:
+                        return fallback
+                    slug = re.sub(r'[^a-zA-Z0-9_-]+', '-', value).strip('-')
+                    return slug or fallback
+
+                extended_meta: dict[str, str] = {}
+                try:
+                    extended_meta = dict(config.extended.model_dump())
+                except AttributeError:
+                    extended_meta = {}
+
+                task_segment = _slug_or_default(
+                    extended_meta.get('task_name'), 'task-unknown'
+                )
+                prompt_segment = _slug_or_default(
+                    extended_meta.get('prompt_type'), 'prompt-unspecified'
+                )
+                instruction_segment = _slug_or_default(
+                    extended_meta.get('instruction_type'),
+                    'instructions-unspecified',
+                )
+                llm_segment = _slug_or_default(llm_name, 'llm')
+
+                dirpath = os.path.join(
+                    base_path,
+                    task_segment,
+                    prompt_segment,
+                    instruction_segment,
+                    llm_segment,
+                )
+                os.makedirs(dirpath, exist_ok=True)
+                file_path = os.path.join(dirpath, filename)
+            else:
+                file_path = base_path
+                dirpath = os.path.dirname(file_path) or "."
+                os.makedirs(dirpath, exist_ok=True)
 
             histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
             with open(file_path, "w", encoding="utf-8") as f:
@@ -744,6 +780,101 @@ async def main_with_loop(loop: asyncio.AbstractEventLoop, args) -> None:
         # User rejected, exit application
         return
 
+    # Derive metadata used for loading instructions and saving trajectories
+    extended_overrides: dict[str, str] = {}
+    try:
+        extended_overrides = dict(config.extended.model_dump())
+    except AttributeError:
+        extended_overrides = {}
+
+    task_name = extended_overrides.get('task_name')
+    for candidate in (
+        getattr(args, 'task_name', None),
+        os.getenv('OPENHANDS_TASK_NAME'),
+        os.getenv('TASK_NAME'),
+        os.getenv('TASK'),
+    ):
+        if candidate:
+            task_name = candidate
+            break
+
+    prompt_type = extended_overrides.get('prompt_type')
+    for candidate in (
+        getattr(args, 'prompt_type', None),
+        os.getenv('PROMPT_TYPE'),
+    ):
+        if candidate:
+            prompt_type = candidate
+            break
+
+    instruction_type = extended_overrides.get('instruction_type')
+    for candidate in (
+        getattr(args, 'instructions_type', None),
+        os.getenv('INSTRUCTIONS_TYPE'),
+        os.getenv('INSTRUCTION_TYPE'),
+    ):
+        if candidate:
+            instruction_type = candidate
+            break
+
+    instructions_base = extended_overrides.get('instructions_base')
+    for candidate in (
+        getattr(args, 'instructions_base', None),
+        os.getenv('INSTRUCTIONS_BASE'),
+    ):
+        if candidate:
+            instructions_base = candidate
+            break
+    if not instructions_base and current_dir:
+        candidate_default = os.path.join(current_dir, 'instructions')
+        if os.path.isdir(candidate_default):
+            instructions_base = candidate_default
+
+    instructions_file = (
+        getattr(args, 'instructions_file', None)
+        or os.getenv('INSTRUCTIONS_FILE')
+        or extended_overrides.get('instructions_file')
+        or 'instructions.md'
+    )
+
+    # Persist overrides back to config.extended for downstream consumers
+    if task_name:
+        extended_overrides['task_name'] = task_name
+    else:
+        extended_overrides.pop('task_name', None)
+    if prompt_type:
+        extended_overrides['prompt_type'] = prompt_type
+    else:
+        extended_overrides.pop('prompt_type', None)
+    if instruction_type:
+        extended_overrides['instruction_type'] = instruction_type
+    else:
+        extended_overrides.pop('instruction_type', None)
+    if instructions_base:
+        extended_overrides['instructions_base'] = instructions_base
+    else:
+        extended_overrides.pop('instructions_base', None)
+    if instructions_file:
+        extended_overrides['instructions_file'] = instructions_file
+    else:
+        extended_overrides.pop('instructions_file', None)
+
+    if extended_overrides != config.extended.model_dump():
+        config.extended = ExtendedConfig.from_dict(extended_overrides)
+
+    conversation_instructions = None
+    if instructions_base and task_name and instruction_type and instruction_type.lower() != 'none':
+        path_parts = [instructions_base, task_name, instruction_type]
+        instruction_dir = os.path.join(*path_parts)
+        candidate_path = os.path.join(instruction_dir, instructions_file)
+        if os.path.isfile(candidate_path):
+            with open(candidate_path, 'r', encoding='utf-8') as instructions_fp:
+                conversation_instructions = instructions_fp.read()
+        else:
+            logger.warning(
+                f"Instruction file not found at {candidate_path}; continuing without additional instructions."
+            )
+
     # Read task from file, CLI args, or stdin
     if args.file:
         # For CLI usage, we want to enhance the file content with a prompt
@@ -773,6 +904,7 @@ After reviewing the file, please ask the user what they would like to do with it
         settings_store,
         current_dir,
         task_str,
+        conversation_instructions=conversation_instructions,
         session_name=args.name,
         skip_banner=banner_shown,
         conversation_id=args.conversation,
@@ -781,7 +913,12 @@ After reviewing the file, please ask the user what they would like to do with it
     # If a new session was requested, run it
     while new_session_requested:
         new_session_requested = await run_session(
-            loop, config, settings_store, current_dir, None
+            loop,
+            config,
+            settings_store,
+            current_dir,
+            None,
+            conversation_instructions=conversation_instructions,
         )
 
     # Teardown the runtime

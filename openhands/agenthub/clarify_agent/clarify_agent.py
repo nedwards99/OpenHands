@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 import openhands.agenthub.clarify_agent.function_calling as codeact_function_calling
 from openhands.agenthub.clarify_agent.tools.bash import create_cmd_run_tool
 from openhands.agenthub.clarify_agent.tools.browser import BrowserTool
-#from openhands.agenthub.clarify_agent.tools.clarify import ClarifyTool
+from openhands.agenthub.clarify_agent.tools.clarify import ClarifyTool
 from openhands.agenthub.clarify_agent.tools.condensation_request import (
     CondensationRequestTool,
 )
@@ -132,7 +132,7 @@ class ClarifyAgent(Agent):
         if self.config.enable_think:
             tools.append(ThinkTool)
         #TODO: add clarify flag
-        #tools.append(ClarifyTool)
+        tools.append(ClarifyTool)
         if self.config.enable_finish:
             tools.append(FinishTool)
         # Add tool for delegating to subagent
