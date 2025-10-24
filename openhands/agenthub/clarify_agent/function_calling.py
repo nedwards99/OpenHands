@@ -301,7 +301,14 @@ def response_to_actions(
                 if questions:
                     lines.append("**Please answer the following:**\n")
 
+                    questions = arguments.get('questions', [])
+
                     for i, q in enumerate(questions, 1):
+                        if not isinstance(q, dict):
+                            raise FunctionCallValidationError(
+                                f'Clarify tool expects question objects (id/text/etc.). '
+                                f'Item {i} was {type(q).__name__}: {q!r}'
+                            )
                         q_id = q.get('id', f'Q{i}')
                         text = q.get('text', '')
                         options = q.get('options', [])
@@ -330,7 +337,7 @@ def response_to_actions(
                     lines.append("💡 *Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
 
                 content = "\n".join(lines)
-                action = MessageAction(content=content, wait_for_response=wait)
+                action = MessageAction(content=content, wait_for_response=True)
 
             # ================================================
             # CondensationRequestAction

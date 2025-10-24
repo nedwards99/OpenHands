@@ -82,6 +82,7 @@ from openhands.events.observation import (
 )
 from openhands.events.serialization.event import truncate_content
 from openhands.llm.metrics import Metrics
+from openhands.llm.tool_names import CLARIFY_TOOL_NAME
 from openhands.runtime.runtime_status import RuntimeStatus
 from openhands.server.services.conversation_stats import ConversationStats
 from openhands.storage.files import FileStore
@@ -659,6 +660,59 @@ class AgentController:
             if action.wait_for_response:
                 await self.set_agent_state_to(AgentState.AWAITING_USER_INPUT)
 
+    def _record_tool_usage(self, action: Action) -> None:
+        """Records tool usage for the agent based on the action taken.
+
+        Args:
+            action (Action): The action taken by the agent.
+        """
+        data = self.state.get_clarify_usage()
+        turn = self.state.iteration_flag.current_value
+
+        if hasattr(action, 'tool_call_metadata') and action.tool_call_metadata and action.tool_call_metadata.function_name == CLARIFY_TOOL_NAME:
+            data['last_turn'] = turn
+            data['turns_since_last'] = 0
+            data['total_calls'] += 1
+            data['reminders_sent'] = 0
+        else:
+            data['turns_since_last'] = (
+                turn - data['last_turn'] if data['last_turn'] is not None else data['turns_since_last'] + 1
+            )
+
+    def enforce_clarify_requirement(self, action: Action) -> None:
+        """Enforces the clarify requirement based on the action taken.
+
+        Args:
+            action (Action): The action taken by the agent.
+        """
+        if isinstance(action, MessageAction) and not getattr(action, 'tool_call_metadata', None):
+            return
+        if (
+            hasattr(action, 'tool_call_metadata')
+            and action.tool_call_metadata
+            and action.tool_call_metadata.function_name == CLARIFY_TOOL_NAME
+        ):
+            return
+
+        data = self.state.get_clarify_usage()
+        max_gap = self.agent.config.clarify_turn_window
+        reminder_limit = self.agent.config.clarify_reminder_limit
+
+        if data['turns_since_last'] > max_gap:
+            if data['reminders_sent'] < reminder_limit:
+                data['reminders_sent'] += 1
+                raise FunctionCallValidationError(
+                    f'Clarify tool must be used at least once every {max_gap} turns. Please use the clarify tool before proceeding.',
+                )
+            else:
+                # raise FunctionCallValidationError(
+                #     f'Clarify tool must be used before other tools after {max_gap} turns.'
+                # )
+                data['reminders_sent'] = 0
+                data['turns_since_last'] = 0
+                data['last_turn'] = self.state.iteration_flag.current_value
+                return
+
     def _reset(self) -> None:
         """Resets the agent controller."""
         # Runnable actions need an Observation
@@ -958,6 +1012,11 @@ class AgentController:
         else:
             try:
                 action = self.agent.step(self.state)
+
+                # Enforce clarify tool every n turns
+                self.enforce_clarify_requirement(action)
+                self._record_tool_usage(action)
+
                 if action is None:
                     raise LLMNoActionError('No action was returned')
                 action._source = EventSource.AGENT  # type: ignore [attr-defined]

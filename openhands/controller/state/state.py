@@ -6,6 +6,7 @@ import pickle
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from collections.abc import MutableMapping
 
 import openhands
 from openhands.controller.state.control_flags import (
@@ -31,6 +32,8 @@ RESUMABLE_STATES = [
     AgentState.AWAITING_USER_INPUT,
     AgentState.FINISHED,
 ]
+
+CLARIFY_EXTRA_KEY = 'clarify_usage'
 
 
 # NOTE: this is deprecated
@@ -105,6 +108,19 @@ class State:
 
     # NOTE: this is used by the controller to track parent's metrics snapshot before delegation
     # evaluation tasks to store extra data needed to track the progress/state of the task.
+
+    def get_clarify_usage(self) -> MutableMapping[str, Any]:
+        usage = self.extra_data.setdefault(
+            CLARIFY_EXTRA_KEY,
+            {
+                'last_turn': None,
+                'total_calls': 0,
+                'turns_since_last': 0,
+                'reminders_sent': 0,
+            }
+        )
+        return usage
+
     extra_data: dict[str, Any] = field(default_factory=dict)
     last_error: str = ''
 
