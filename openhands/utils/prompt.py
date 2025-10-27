@@ -67,6 +67,8 @@ class PromptManager:
         self.microagent_info_template: Template = self._load_template(
             'microagent_info.j2'
         )
+        # Add in-context learning example
+        self.in_context_template = self._load_template('in_context_learning_example.j2')
 
     def _load_template(self, template_name: str) -> Template:
         """Load a template from the prompt directory.
@@ -91,6 +93,12 @@ class PromptManager:
 
         system_message = self.system_template.render(**context).strip()
         return refine_prompt(system_message)
+
+    def get_in_context_example(self, **context) -> str:
+        from openhands.agenthub.codeact_agent.tools.prompt import refine_prompt
+
+        in_context_message = self.in_context_template.render(**context).strip()
+        return refine_prompt(in_context_message)
 
     def get_example_user_message(self) -> str:
         """This is an initial user message that can be provided to the agent

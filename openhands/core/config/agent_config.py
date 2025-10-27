@@ -64,8 +64,9 @@ class AgentConfig(BaseModel):
     """Extended configuration for the agent."""
     runtime: str | None = Field(default=None)
     """Runtime type (e.g., 'docker', 'local', 'cli') used for runtime-specific tool behavior."""
-    clarify_turn_window: int = 10
-    clarify_reminder_limit: int = 1
+
+    # clarify_turn_window: int = 10
+    # clarify_reminder_limit: int = 1
 
     model_config = ConfigDict(extra='forbid')
 

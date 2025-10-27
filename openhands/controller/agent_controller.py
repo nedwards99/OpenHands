@@ -161,11 +161,11 @@ class AgentController:
         self.is_delegate = is_delegate
         self.conversation_stats = conversation_stats
 
-        # Track intent delegation
-        self._intent_delegate_run = False
-        self._intent_delegate_pending: MessageAction | None = None
-        self._intent_delegate_ready: bool = False
-        self._intent_delegate_processing: bool = False
+        # # Track intent delegation
+        # self._intent_delegate_run = False
+        # self._intent_delegate_pending: MessageAction | None = None
+        # self._intent_delegate_ready: bool = False
+        # self._intent_delegate_processing: bool = False
 
         # the event stream must be set before maybe subscribing to it
         self.event_stream = event_stream
@@ -555,25 +555,25 @@ class AgentController:
 
             self._pending_action = None
 
-            if isinstance(observation, AgentDelegateObservation):
-                self._intent_delegate_ready = True
-                reply_content = ''
-                if isinstance(observation.outputs, dict):
-                    reply_content = observation.outputs.get('user_response', '') or ''
+            # if isinstance(observation, AgentDelegateObservation):
+            #     self._intent_delegate_ready = True
+            #     reply_content = ''
+            #     if isinstance(observation.outputs, dict):
+            #         reply_content = observation.outputs.get('user_response', '') or ''
 
-                if reply_content.strip():
-                    self.event_stream.add_event(
-                        MessageAction(content=reply_content, wait_for_response=False),
-                        EventSource.USER,
-                    )
-                elif self._intent_delegate_pending is not None:
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = asyncio.get_event_loop()
-                    loop.create_task(self._handle_message_action(self._intent_delegate_pending))
-                    self._intent_delegate_pending = None
-                    self._intent_delegate_ready = False
+            #     if reply_content.strip():
+            #         self.event_stream.add_event(
+            #             MessageAction(content=reply_content, wait_for_response=False),
+            #             EventSource.USER,
+            #         )
+            #     elif self._intent_delegate_pending is not None:
+            #         try:
+            #             loop = asyncio.get_running_loop()
+            #         except RuntimeError:
+            #             loop = asyncio.get_event_loop()
+            #         loop.create_task(self._handle_message_action(self._intent_delegate_pending))
+            #         self._intent_delegate_pending = None
+            #         self._intent_delegate_ready = False
 
             if self.state.agent_state == AgentState.USER_CONFIRMED:
                 await self.set_agent_state_to(AgentState.RUNNING)
@@ -1014,8 +1014,8 @@ class AgentController:
                 action = self.agent.step(self.state)
 
                 # Enforce clarify tool every n turns
-                self.enforce_clarify_requirement(action)
-                self._record_tool_usage(action)
+                #self.enforce_clarify_requirement(action)
+                #self._record_tool_usage(action)
 
                 if action is None:
                     raise LLMNoActionError('No action was returned')
