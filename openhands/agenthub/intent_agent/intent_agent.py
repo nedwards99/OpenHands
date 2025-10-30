@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import openhands.agenthub.intent_agent.function_calling as intent_function_calling
 from openhands.agenthub.clarify_agent.tools.bash import create_cmd_run_tool
 from openhands.agenthub.clarify_agent.tools.clarify import ClarifyTool
-from openhands.agenthub.clarify_agent.tools.finish import FinishTool
+from openhands.agenthub.intent_agent.tools.finish import FinishTool
 from openhands.agenthub.clarify_agent.tools.str_replace_editor import (
     create_str_replace_editor_tool,
 )
@@ -77,7 +77,6 @@ class IntentAgent(Agent):
             self.config.resolved_system_prompt_filename,
         )
 
-
         # Create a ConversationMemory instance
         self.conversation_memory = ConversationMemory(self.config, self.prompt_manager)
         if shared_condenser is not None:
@@ -90,7 +89,7 @@ class IntentAgent(Agent):
             logger.debug(f'Using condenser: {type(self.condenser)}')
 
         # Override with router if needed
-        self.llm = self.llm_registry.get_router(self.config)
+        #self.llm = self.llm_registry.get_router(self.config, service_id=self.name)
         self.awaiting_user_response = False
         self.awaiting_user_response_id: int | None = None
 
@@ -116,22 +115,22 @@ class IntentAgent(Agent):
             )
 
         tools = []
-        if self.config.enable_cmd:
-            tools.append(
-                create_cmd_run_tool(use_short_description=use_short_tool_desc)
-            )
-        if self.config.enable_think:
-            tools.append(ThinkTool)
-        tools.append(ClarifyTool)
+        # if self.config.enable_cmd:
+        #     tools.append(
+        #         create_cmd_run_tool(use_short_description=use_short_tool_desc)
+        #     )
+        # if self.config.enable_think:
+        #     tools.append(ThinkTool)
+        # tools.append(ClarifyTool)
         if self.config.enable_finish:
             tools.append(FinishTool)
-        elif self.config.enable_editor:
-            tools.append(
-                create_str_replace_editor_tool(
-                    use_short_description=use_short_tool_desc,
-                    runtime_type=self.config.runtime,
-                )
-            )
+        # elif self.config.enable_editor:
+        #     tools.append(
+        #         create_str_replace_editor_tool(
+        #             use_short_description=use_short_tool_desc,
+        #             runtime_type=self.config.runtime,
+        #         )
+        #     )
         return tools
 
     def reset(self) -> None:

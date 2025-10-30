@@ -2,7 +2,7 @@ import os
 import re
 import sys
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openhands.llm.llm_registry import LLMRegistry
 
@@ -38,9 +38,10 @@ from openhands.core.config import AgentConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message, TextContent
 
-from openhands.events.action import AgentFinishAction, MessageAction
+from openhands.events.action import AgentFinishAction, MessageAction, Action, AgentDelegateAction
 from openhands.events.event import Event, EventSource
 from openhands.events.observation.observation import Observation
+from openhands.events.observation.delegate import AgentDelegateObservation
 from openhands.llm.llm_utils import check_tools
 from openhands.memory.condenser import Condenser
 from openhands.memory.condenser.condenser import Condensation, View
@@ -52,6 +53,7 @@ from openhands.runtime.plugins import (
 )
 from openhands.utils.prompt import PromptManager
 
+REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete."
 
 class ClarifyAgent(Agent):
     VERSION = '2.2'
@@ -91,6 +93,8 @@ class ClarifyAgent(Agent):
         super().__init__(config, llm_registry)
         self.pending_actions: deque['Action'] = deque()
         #self._next_reminder_message: str | None = None
+        self._awaiting_intent: bool = False
+        self._intent_verdict: dict[str, Any] | None = None
         self.reset()
         self.tools = self._get_tools()
 
@@ -219,18 +223,72 @@ class ClarifyAgent(Agent):
         )
 
         initial_user_message = self._get_initial_user_message(state.history)
-        messages = self._get_messages(condensed_history, initial_user_message)
-        params: dict = {
-            'messages': messages,
-        }
-        params['tools'] = check_tools(self.tools, self.llm.config)
-        params['extra_body'] = {
-            'metadata': state.to_llm_metadata(
-                model_name=self.llm.config.model, agent_name=self.name
-            )
-        }
-        response = self.llm.completion(**params)
-        logger.debug(f'Response from LLM: {response}')
+
+        # reminder_message = """Before proceeding, carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should. If you have identified ambiguity, immediately call the `clarify` tool. Otherwise, proceed normally. Only skip asking questions when you are absolutely sure all relevant information is complete."""
+
+        # Delegate to IntentAgent for ambiguity
+        if not self._awaiting_intent:
+
+            self._awaiting_intent = True
+            self._intent_verdict = None
+            summary_message = self._build_intent_context(state)
+            return AgentDelegateAction(
+                    agent='IntentAgent',
+                    # Pass in intent context
+                    inputs={'prompt': summary_message + '\n' + REMINDER_MESSAGE},
+                )
+
+        elif self._awaiting_intent:
+
+            self._intent_verdict = self._read_intent_verdict(state.history)
+            self._awaiting_intent = False
+            if self._intent_verdict is None:
+                logger.warning('Waiting for IntentAgent verdict…')
+            self._awaiting_intent = False
+
+        logger.warning(f"Intent verdict: {self._intent_verdict}")
+        if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+            reason = self._intent_verdict.get('reasons', 'No reasons provided.')
+            if reason:
+                reminder = (
+                    "Intent agent flagged open ambiguities in the current context; call the clarify tool next.\n"
+                    f"Reason: {reason.strip()}"
+                )
+            else:
+                reminder = "Intent agent flagged open ambiguities in the current context; call the clarify tool next."
+            messages = self._get_messages(condensed_history, initial_user_message)
+            messages.append(Message(role='system', content=[TextContent(text=reminder)]))
+
+            params: dict = {
+                'messages': messages,
+            }
+            # Restrict tools to Clarify (and maybe Finish) for this turn.
+            params['tools'] = check_tools([ClarifyTool], self.llm.config) #, FinishTool
+            params['extra_body'] = {
+                'metadata': state.to_llm_metadata(
+                    model_name=self.llm.config.model, agent_name=self.name
+                )
+            }
+            response = self.llm.completion(**params)
+            logger.debug(f'Response from LLM: {response}')
+
+        else:
+            if self._intent_verdict is None:
+                logger.warning('IntentAgent returned no verdict; continuing normally.')
+
+            messages = self._get_messages(condensed_history, initial_user_message)
+            params: dict = {
+                'messages': messages,
+            }
+            params['tools'] = check_tools(self.tools, self.llm.config)
+            params['extra_body'] = {
+                'metadata': state.to_llm_metadata(
+                    model_name=self.llm.config.model, agent_name=self.name
+                )
+            }
+            response = self.llm.completion(**params)
+            logger.debug(f'Response from LLM: {response}')
+
         actions = self.response_to_actions(response)
         logger.debug(f'Actions after response_to_actions: {actions}')
         # # Add ambiguity reminder
@@ -248,6 +306,66 @@ class ClarifyAgent(Agent):
         for action in actions:
             self.pending_actions.append(action)
         return self.pending_actions.popleft()
+
+    def _has_real_user_message(self, history: list[Event]) -> bool:
+        example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
+        for event in history:
+            if isinstance(event, MessageAction) and event.source == 'user':
+                text = event.content.strip()
+                if text and (not example or not text.startswith(example)):
+                    return True
+        return False
+
+    def _find_first_real_user_message(self, history: list[Event]) -> MessageAction | None:
+        example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
+        for event in history:
+            if isinstance(event, MessageAction) and event.source == 'user':
+                text = event.content.strip()
+                if example and text.startswith(example):
+                    continue
+                if text:
+                    return event
+        return None
+
+    def _build_intent_context(self, state: State) -> str:
+        initial = self._find_first_real_user_message(state.history).content.strip()
+        if initial is None:
+            initial = '(no user message found)'
+        try:
+            latest = state.get_last_user_message().content.strip()
+        except AttributeError:
+            latest = '(no user message found)'
+        # summary = '\n'.join(
+        #     self._summarize_event_for_intent(ev)
+        #     for ev in state.history[-20:]
+        #     if isinstance(ev, (MessageAction, Observation))
+        # ) or '(no recent events)'
+        summary = '\n'.join(
+            ev.content.strip()
+            for ev in state.history
+            if isinstance(ev, (MessageAction, Observation))
+        ) or '(no recent events)'
+
+        if initial == latest:
+            return(
+                f"User message:\n{initial or '(none)'}\n\n"
+                f"Recent context:\n{summary}"
+            )
+        else:
+            return (
+                f"Initial user message:\n{initial or '(none)'}\n\n"
+                f"Latest user message:\n{latest or '(none)'}\n\n"
+                f"Recent context:\n{summary}"
+            )
+
+    def _summarize_event_for_intent(self, event: Event) -> str:
+        if isinstance(event, MessageAction):
+            return self._summarize_agent_event(event) or 'Agent message.'
+        if isinstance(event, Action):
+            return self._summarize_agent_event(event) or event.__class__.__name__
+        if isinstance(event, Observation):
+            return self._summarize_environment_observation(event) or event.__class__.__name__
+        return event.__class__.__name__
 
     def _get_initial_user_message(self, history: list[Event]) -> MessageAction:
         """Finds the initial user message action from the full history."""
@@ -326,260 +444,137 @@ class ClarifyAgent(Agent):
                             break
                 break
 
-        # Add ambiguity check at each turn
-        reminder_message = """Before selecting your next tool or drafting a reply, first reason explicitly about whether you have enough information. After stating that reasoning, write a line formatted as `Ambiguity assessment: <clear|ambiguous>.` If the assessment is `ambiguous`, immediately call the `clarify` tool with questions for the user. If it is `clear`, proceed normally.'
-        """
-
-        # reminder_message = """Before proceeding, carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact your work, don't hesitate to ask questions. If you have identified ambiguity, immediately call the `clarify` tool. Otherwise, proceed normally. Only skip asking questions when you are absolutely sure all relevant information is complete.
-        # """
-
-        messages.append(
-            Message(
-                role='system',
-                content=[TextContent(text=reminder_message)],
-            )
-        )
-
         return messages
 
-    # def _build_ambiguity_check_message(
-    #     self,
-    #     messages: list[Message],
-    #     events: list[Event],
-    #     in_context_example: str | None = None,
-    # ) -> str | None:
-    #     """Compose the per-turn ambiguity reminder including environment context."""
-    #     latest_user_text = self._extract_latest_user_text(
-    #         messages, in_context_example=in_context_example
-    #     )
+    def _read_intent_verdict(self, history: list[Event]) -> dict[str, Any] | None:
+        """Scan the newest events for the delegate's result and return it as a dict."""
+        intent_outputs: dict[str, Any] | None = None
+        for event in reversed(history):
+            if isinstance(event, AgentDelegateObservation):
+                intent_outputs = event.outputs
+                break
 
-    #     # To add summarized context of history
-    #     #context_notes = self._collect_recent_context_notes(events, max_notes=3)
-    #     context_notes = []
+        if intent_outputs is None:
+            # This should not happen in a valid conversation
+            logger.error(
+                f'CRITICAL: Could not find the latest Intent Agent output in the full {len(history)} events history.'
+            )
+            # Depending on desired robustness, could raise error or create a dummy action
+            # and log the error
+            raise ValueError(
+                'Latest Intent Agent output not found in history. Please report this issue.'
+            )
 
-    #     if not latest_user_text and not context_notes:
-    #         return None
+        return intent_outputs
 
-    #     lines: list[str] = ['AMBIGUITY CHECK REMINDER:']
+    def _summarize_agent_event(self, event: Event | None) -> str | None:
+        """Create a single-line summary of the most recent agent-originated event."""
+        if event is None:
+            return None
 
-    #     if latest_user_text:
-    #         lines.append('Latest user guidance snapshot:')
-    #         lines.append(f'"""\n{latest_user_text}\n"""')
+        if isinstance(event, MessageAction):
+            prefix = 'Agent question' if event.wait_for_response else 'Agent message'
+            summary = self._truncate_for_prompt(event.content, condense=True)
+            return f'{prefix}: {summary}'
 
-    #     if context_notes:
-    #         lines.append('')
-    #         lines.append('Recent environment context to review:')
-    #         for note in context_notes:
-    #             lines.append(f'- {note}')
+        command = getattr(event, 'command', '')
+        if isinstance(command, str) and command:
+            summary = self._truncate_for_prompt(command, condense=True)
+            return f'Agent command: `{summary}`'
 
-    #     lines.append('')
-    #     lines.append(
-    #         'Before selecting your next tool or drafting a reply, first reason explicitly about whether you have enough clarity.'
-    #     )
-    #     lines.append(
-    #         'After stating that reasoning, write a line formatted as `Ambiguity assessment: <clear|ambiguous> - <short justification derived from your reasoning>`.'
-    #     )
-    #     lines.append(
-    #         'Base this decision on both the user guidance and the environment signals above.'
-    #     )
-    #     lines.append(
-    #         'If the assessment is `ambiguous`, immediately call the clarify tool with focused questions '
-    #         'and wait for the user response before any other action. If it is `clear`, proceed normally.'
-    #     )
+        code = getattr(event, 'code', '')
+        if isinstance(code, str) and code:
+            summary = self._truncate_for_prompt(code, condense=True)
+            return f'Agent code cell: {summary}'
 
-    #     return '\n'.join(lines)
+        path = getattr(event, 'path', '')
+        if isinstance(path, str) and path:
+            summary = self._truncate_for_prompt(path, condense=True)
+            return f'Agent action on `{summary}`'
 
-    # def _extract_latest_user_text(
-    #     self, messages: list[Message], in_context_example: str | None = None
-    # ) -> str:
-    #     """Return the latest user-provided text, removing in-context learning example for brevity."""
-    #     for msg in reversed(messages):
-    #         if msg.role != 'user':
-    #             continue
-    #         for content in msg.content:
-    #             if isinstance(content, TextContent):
-    #                 text = content.text.strip()
-    #                 if text:
-    #                     if in_context_example:
-    #                         prefix = f'{in_context_example}\n\n'
-    #                         if text.startswith(prefix):
-    #                             text = text[len(prefix):]
-    #                     text = self._strip_prompt_scaffolding(text)
-    #                     return self._truncate_for_prompt(text, limit=1200)
-    #     return ''
+        thought = getattr(event, 'thought', '')
+        if isinstance(thought, str) and thought:
+            summary = self._truncate_for_prompt(thought, condense=True)
+            return f'Agent thought: {summary}'
 
-    # def _collect_recent_context_notes(
-    #     self, events: list[Event], max_notes: int = 3
-    # ) -> list[str]:
-    #     """Gather a short summary of the most recent agent step and environment feedback."""
-    #     if not events or max_notes <= 0:
-    #         return []
+        return event.__class__.__name__
 
-    #     latest_agent_event: Event | None = None
-    #     environment_events: list[Observation] = []
+    def _summarize_environment_observation(self, observation: Observation) -> str | None:
+        """Create a single-line summary describing a recent environment observation."""
+        if hasattr(observation, 'command') and hasattr(observation, 'exit_code'):
+            command = getattr(observation, 'command', '')
+            exit_code = getattr(observation, 'exit_code', None)
+            status = 'ok'
+            if isinstance(exit_code, int) and exit_code != 0:
+                status = f'exit {exit_code}'
+            command_summary = (
+                f' `{self._truncate_for_prompt(command, limit=80, condense=True)}`'
+                if isinstance(command, str) and command
+                else ''
+            )
+            output_summary = self._truncate_for_prompt(
+                getattr(observation, 'content', ''), condense=True
+            )
+            return f'Command output{command_summary} ({status}): {output_summary}'
 
-    #     for event in reversed(events):
-    #         source = event.source
-    #         if latest_agent_event is None and source == EventSource.AGENT:
-    #             latest_agent_event = event
-    #             continue
+        if hasattr(observation, 'path'):
+            path = getattr(observation, 'path', '')
+            path_summary = self._truncate_for_prompt(path, limit=120, condense=True)
+            content_summary = self._truncate_for_prompt(
+                getattr(observation, 'content', ''), condense=True
+            )
+            return f'File `{path_summary}` observation: {content_summary}'
 
-    #         if (
-    #             isinstance(event, Observation)
-    #             and source in {EventSource.ENVIRONMENT, None}
-    #             and len(environment_events) < max_notes
-    #         ):
-    #             environment_events.append(event)
+        if hasattr(observation, 'task_list'):
+            task_list = getattr(observation, 'task_list', [])
+            pending: list[str] = []
+            if isinstance(task_list, list):
+                for task in task_list:
+                    if not isinstance(task, dict):
+                        continue
+                    status = str(task.get('status', '')).lower()
+                    if status in {'done', 'complete', 'completed'}:
+                        continue
+                    title = task.get('title') or task.get('id') or 'unnamed task'
+                    pending.append(str(title))
+            if pending:
+                preview = ', '.join(pending[:3])
+                if len(pending) > 3:
+                    preview += ', ...'
+                return f'Task tracker pending items: {preview}'
+            return 'Task tracker: all tasks currently marked complete.'
 
-    #         if latest_agent_event and len(environment_events) >= max_notes:
-    #             break
+        if hasattr(observation, 'error_id') or observation.__class__.__name__.lower().startswith(
+            'error'
+        ):
+            error_summary = self._truncate_for_prompt(
+                getattr(observation, 'content', ''), condense=True
+            )
+            return f'Error reported: {error_summary}'
 
-    #     notes: list[str] = []
-    #     seen: set[str] = set()
+        content = getattr(observation, 'content', '')
+        if isinstance(content, str) and content.strip():
+            content_summary = self._truncate_for_prompt(content, condense=True)
+            return f'{observation.__class__.__name__}: {content_summary}'
 
-    #     agent_note = self._summarize_agent_event(latest_agent_event)
-    #     if agent_note and agent_note not in seen:
-    #         notes.append(agent_note)
-    #         seen.add(agent_note)
+        return observation.__class__.__name__
 
-    #     for observation in environment_events:
-    #         obs_note = self._summarize_environment_observation(observation)
-    #         if obs_note and obs_note not in seen:
-    #             notes.append(obs_note)
-    #             seen.add(obs_note)
-    #         if len(notes) >= max_notes:
-    #             break
+    @staticmethod
+    def _truncate_for_prompt(
+        text: str, limit: int = 1000, condense: bool = False
+    ) -> str:
+        """Trim and optionally condense text so reminders stay compact."""
+        if not isinstance(text, str):
+            return ''
 
-    #     return notes
+        processed = text.strip()
+        if condense:
+            processed = ' '.join(processed.split())
 
-    # def _summarize_agent_event(self, event: Event | None) -> str | None:
-    #     """Create a single-line summary of the most recent agent-originated event."""
-    #     if event is None:
-    #         return None
+        if len(processed) <= limit:
+            return processed
 
-    #     if isinstance(event, MessageAction):
-    #         prefix = 'Agent question' if event.wait_for_response else 'Agent message'
-    #         summary = self._truncate_for_prompt(event.content, condense=True)
-    #         return f'{prefix}: {summary}'
-
-    #     command = getattr(event, 'command', '')
-    #     if isinstance(command, str) and command:
-    #         summary = self._truncate_for_prompt(command, condense=True)
-    #         return f'Agent command: `{summary}`'
-
-    #     code = getattr(event, 'code', '')
-    #     if isinstance(code, str) and code:
-    #         summary = self._truncate_for_prompt(code, condense=True)
-    #         return f'Agent code cell: {summary}'
-
-    #     path = getattr(event, 'path', '')
-    #     if isinstance(path, str) and path:
-    #         summary = self._truncate_for_prompt(path, condense=True)
-    #         return f'Agent action on `{summary}`'
-
-    #     thought = getattr(event, 'thought', '')
-    #     if isinstance(thought, str) and thought:
-    #         summary = self._truncate_for_prompt(thought, condense=True)
-    #         return f'Agent thought: {summary}'
-
-    #     return event.__class__.__name__
-
-    # def _summarize_environment_observation(self, observation: Observation) -> str | None:
-    #     """Create a single-line summary describing a recent environment observation."""
-    #     if hasattr(observation, 'command') and hasattr(observation, 'exit_code'):
-    #         command = getattr(observation, 'command', '')
-    #         exit_code = getattr(observation, 'exit_code', None)
-    #         status = 'ok'
-    #         if isinstance(exit_code, int) and exit_code != 0:
-    #             status = f'exit {exit_code}'
-    #         command_summary = (
-    #             f' `{self._truncate_for_prompt(command, limit=80, condense=True)}`'
-    #             if isinstance(command, str) and command
-    #             else ''
-    #         )
-    #         output_summary = self._truncate_for_prompt(
-    #             getattr(observation, 'content', ''), condense=True
-    #         )
-    #         return f'Command output{command_summary} ({status}): {output_summary}'
-
-    #     if hasattr(observation, 'path'):
-    #         path = getattr(observation, 'path', '')
-    #         path_summary = self._truncate_for_prompt(path, limit=120, condense=True)
-    #         content_summary = self._truncate_for_prompt(
-    #             getattr(observation, 'content', ''), condense=True
-    #         )
-    #         return f'File `{path_summary}` observation: {content_summary}'
-
-    #     if hasattr(observation, 'task_list'):
-    #         task_list = getattr(observation, 'task_list', [])
-    #         pending: list[str] = []
-    #         if isinstance(task_list, list):
-    #             for task in task_list:
-    #                 if not isinstance(task, dict):
-    #                     continue
-    #                 status = str(task.get('status', '')).lower()
-    #                 if status in {'done', 'complete', 'completed'}:
-    #                     continue
-    #                 title = task.get('title') or task.get('id') or 'unnamed task'
-    #                 pending.append(str(title))
-    #         if pending:
-    #             preview = ', '.join(pending[:3])
-    #             if len(pending) > 3:
-    #                 preview += ', ...'
-    #             return f'Task tracker pending items: {preview}'
-    #         return 'Task tracker: all tasks currently marked complete.'
-
-    #     if hasattr(observation, 'error_id') or observation.__class__.__name__.lower().startswith(
-    #         'error'
-    #     ):
-    #         error_summary = self._truncate_for_prompt(
-    #             getattr(observation, 'content', ''), condense=True
-    #         )
-    #         return f'Error reported: {error_summary}'
-
-    #     content = getattr(observation, 'content', '')
-    #     if isinstance(content, str) and content.strip():
-    #         content_summary = self._truncate_for_prompt(content, condense=True)
-    #         return f'{observation.__class__.__name__}: {content_summary}'
-
-    #     return observation.__class__.__name__
-
-    # @staticmethod
-    # def _truncate_for_prompt(
-    #     text: str, limit: int = 240, condense: bool = False
-    # ) -> str:
-    #     """Trim and optionally condense text so reminders stay compact."""
-    #     if not isinstance(text, str):
-    #         return ''
-
-    #     processed = text.strip()
-    #     if condense:
-    #         processed = ' '.join(processed.split())
-
-    #     if len(processed) <= limit:
-    #         return processed
-
-    #     return processed[: limit - 3].rstrip() + '...'
-
-    # @staticmethod
-    # def _strip_prompt_scaffolding(text: str) -> str:
-    #     """Remove additional-info blocks and other prompt scaffolding from user text."""
-    #     if not isinstance(text, str):
-    #         return ''
-
-    #     cleaned = text
-    #     # Remove templated sections enclosed in angle-bracket tags (e.g., <REPOSITORY_INFO> ... </REPOSITORY_INFO>)
-    #     cleaned = re.sub(
-    #         r'<[A-Z0-9_]+>.*?</[A-Z0-9_]+>\s*', '', cleaned, flags=re.DOTALL
-    #     )
-    #     # Remove leading labels like "Additional context:" or "Extra information:"
-    #     cleaned = re.sub(
-    #         r'^\s*(additional|extra)\s+(context|information)\s*:?\s*',
-    #         '',
-    #         cleaned,
-    #         flags=re.IGNORECASE,
-    #     )
-    #     return cleaned.strip()
+        return processed[: limit - 3].rstrip() + '...'
 
     def response_to_actions(self, response: 'ModelResponse') -> list['Action']:
         return codeact_function_calling.response_to_actions(

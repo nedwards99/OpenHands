@@ -70,13 +70,17 @@ class LLMRegistry:
 
     def get_llm_from_agent_config(self, service_id: str, agent_config: AgentConfig):
         llm_config = self.config.get_llm_config_from_agent_config(agent_config)
-        if service_id in self.service_to_llm:
-            if self.service_to_llm[service_id].config != llm_config:
-                # TODO: update llm config internally
-                # Done when agent delegates has different config, we should reuse the existing LLM
-                pass
-            return self.service_to_llm[service_id]
-
+        existing = self.service_to_llm.get(service_id)
+        if existing:
+            if existing.config != llm_config:
+                logger.info(
+                    "Service %s LLM config changed from %s to %s; refreshing instance",
+                    service_id,
+                    existing.config.model,
+                    llm_config.model,
+                )
+                return self._create_new_llm(config=llm_config, service_id=service_id)
+            return existing
         return self._create_new_llm(config=llm_config, service_id=service_id)
 
     def get_llm(
@@ -118,7 +122,10 @@ class LLMRegistry:
         router_name = agent_config.model_routing.router_name
 
         if router_name == 'noop_router':
-            # Return the main LLM directly (no routing)
+            # # Return the main LLM directly (no routing)
+            # return self.get_llm_from_agent_config('agent', agent_config)
+            # Return the LLM for this specific agent (no routing).
+            # Derive a stable, per-agent service_id to avoid collisions.
             return self.get_llm_from_agent_config('agent', agent_config)
 
         return RouterLLM.from_config(

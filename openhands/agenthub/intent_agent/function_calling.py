@@ -2,14 +2,8 @@ import json
 
 from litellm import ModelResponse
 
-from openhands.agenthub.clarify_agent.tools import (
-    BrowserTool,
-    ClarifyTool,
-    CondensationRequestTool,
-    IntentAgentDelegateTool,
+from openhands.agenthub.intent_agent.tools import (
     FinishTool,
-    IPythonTool,
-    LLMBasedFileEditTool,
     ThinkTool,
     create_cmd_run_tool,
     create_str_replace_editor_tool,
@@ -35,7 +29,7 @@ from openhands.events.action import (
 )
 from openhands.events.tool import ToolCallMetadata
 from openhands.events.event import FileEditSource, FileReadSource
-from openhands.agenthub.clarify_agent.tools.security_utils import RISK_LEVELS
+from openhands.agenthub.intent_agent.tools.security_utils import RISK_LEVELS
 def combine_thought(action: Action, thought: str) -> Action:
     if not hasattr(action, 'thought'):
         return action
@@ -58,64 +52,6 @@ def set_security_risk(action: Action, arguments: dict) -> None:
                 )
         else:
             logger.warning(f'Invalid security_risk value: {arguments["security_risk"]}')
-
-def _collect_text_content(message_content) -> str:
-    if isinstance(message_content, str):
-        return message_content
-    if isinstance(message_content, list):
-        return ''.join(
-            chunk.get('text', '') for chunk in message_content if chunk.get('type') == 'text'
-        )
-    return ''
-
-
-def _render_clarify_message(arguments: dict) -> str:
-    questions = arguments.get('questions', [])
-    preamble = arguments.get('message', '')
-    checklist = arguments.get('checklist', [])
-
-    lines: list[str] = []
-
-    if preamble:
-        lines.append(f'❓ {preamble.strip()}\n')
-    else:
-        lines.append('❓ I see a few open questions before we can proceed:\n')
-
-    if checklist:
-        lines.append('📋 **Requirements Snapshot**')
-        lines.append('```')
-        max_label = max(len(item.get('label', '')) for item in checklist)
-        max_status = max(len(item.get('status', '')) for item in checklist)
-
-        lines.append(f"{'Requirement':<{max_label}} | {'Status':<{max_status}} | Notes")
-        lines.append(f"{'-' * max_label}-+-{'-' * max_status}-+------")
-
-        status_icons = {'OK': '✅', 'UNKNOWN': '❓', 'MISSING': '❌', 'N/A': '⊘'}
-
-        for item in checklist:
-            label = item.get('label', '')
-            status = item.get('status', 'UNKNOWN')
-            value = item.get('value', '')
-            emoji = status_icons.get(status, '?')
-            lines.append(f"{label:<{max_label}} | {emoji} {status:<{max_status-2}} | {value}")
-        lines.append('```')
-        lines.append('')
-
-    if questions:
-        lines.append('### Clarifying Questions')
-        for idx, question in enumerate(questions, 1):
-            text = question.get('text', '')
-            options = question.get('options')
-            default = question.get('default')
-            option_suffix = ''
-            if options:
-                option_suffix += f" options: {', '.join(options)}"
-            if default:
-                option_suffix += f" (recommended: {default})"
-            lines.append(f'{idx}. {text}{option_suffix}')
-
-    return '\n'.join(lines).strip()
-
 
 def response_to_actions(
     response: ModelResponse, mcp_tool_names: list[str] | None = None
@@ -170,20 +106,20 @@ def response_to_actions(
                         ) from e
                 set_security_risk(action, arguments)
 
-            elif tool_call.function.name == ClarifyTool['function']['name']:
-                content = _render_clarify_message(arguments)
-                wait_for_response = arguments.get('wait_for_response', True)
-                if isinstance(wait_for_response, str):
-                    wait_for_response = wait_for_response.lower() == 'true'
-
-                action = MessageAction(
-                    content=content or 'I have a few clarification questions.',
-                    wait_for_response=wait_for_response,
-                )
+            # elif tool_call.function.name == FinishTool['function']['name']:
+            #     action = AgentFinishAction(
+            #         final_thought=arguments.get('message', ''),
+            #     )
             elif tool_call.function.name == FinishTool['function']['name']:
+                outputs = {
+                    'needs_clarification': bool(arguments.get('needs_clarification')),
+                    'reasons': arguments.get('reasons', ''),
+                }
                 action = AgentFinishAction(
                     final_thought=arguments.get('message', ''),
+                    outputs={k: v for k, v in outputs.items() if v is not None},
                 )
+
             elif (
                 tool_call.function.name
                 == create_str_replace_editor_tool()['function']['name']

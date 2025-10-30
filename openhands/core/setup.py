@@ -10,6 +10,7 @@ from openhands.controller import AgentController
 from openhands.controller.agent import Agent
 from openhands.controller.state.state import State
 from openhands.core.config import (
+    AgentConfig,
     OpenHandsConfig,
 )
 from openhands.core.config.config_utils import DEFAULT_WORKSPACE_MOUNT_PATH_IN_SANDBOX
@@ -229,12 +230,23 @@ def create_controller(
     except Exception as e:
         logger.debug(f'Cannot restore agent state: {e}')
 
+    # Build map of per-agent configs so delegates use their dedicated settings
+    agent_configs_map: dict[str, AgentConfig] = {}
+    for name, agent_cfg in config.get_agent_configs().items():
+        try:
+            cloned_cfg = agent_cfg.model_copy(deep=True)
+        except AttributeError:
+            cloned_cfg = agent_cfg.copy(deep=True)
+        cloned_cfg.runtime = config.runtime
+        agent_configs_map[name] = cloned_cfg
+
     controller = AgentController(
         agent=agent,
         conversation_stats=conversation_stats,
         iteration_delta=config.max_iterations,
         budget_per_task_delta=config.max_budget_per_task,
         agent_to_llm_config=config.get_agent_to_llm_config_map(),
+        agent_configs=agent_configs_map,
         event_stream=event_stream,
         initial_state=initial_state,
         headless_mode=headless_mode,

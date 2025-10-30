@@ -123,6 +123,14 @@ class LLM(RetryMixin, DebugMixin):
             # openai doesn't expose top_p, but litellm does
             kwargs['top_p'] = self.config.top_p
 
+        # Anthropic models reject requests that specify both temperature and top_p. Prefer temperature.
+        if (
+            'claude' in self.config.model
+            and self.config.temperature is not None
+            and self.config.top_p is not None
+        ):
+            kwargs.pop('top_p', None)
+
         # Handle OpenHands provider - rewrite to litellm_proxy
         if self.config.model.startswith('openhands/'):
             model_name = self.config.model.removeprefix('openhands/')
@@ -158,7 +166,11 @@ class LLM(RetryMixin, DebugMixin):
             kwargs.pop(
                 'temperature'
             )  # temperature is not supported for reasoning models
-            kwargs.pop('top_p')  # reasoning model like o3 doesn't support top_p
+            try:
+                kwargs.pop('top_p')  # reasoning model like o3 doesn't support top_p
+            # In case of trying with other claude models
+            except KeyError:
+                pass
         # Azure issue: https://github.com/All-Hands-AI/OpenHands/issues/6777
         if self.config.model.startswith('azure'):
             kwargs['max_tokens'] = self.config.max_output_tokens
