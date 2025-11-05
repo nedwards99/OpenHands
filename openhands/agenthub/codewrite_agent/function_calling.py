@@ -117,7 +117,6 @@ def response_to_actions(response: ModelResponse) -> list[Action]:
             elif tool_call.function.name == FinishTool['function']['name']:
                 action = AgentFinishAction(
                     final_thought=arguments.get('message', ''),
-                    task_completed=arguments.get('task_completed', None),
                 )
 
             # ================================================

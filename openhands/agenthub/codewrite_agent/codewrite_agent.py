@@ -1,4 +1,3 @@
-import copy
 import os
 from collections import deque
 
@@ -8,7 +7,6 @@ import openhands.agenthub.codewrite_agent.function_calling as codeact_function_c
 from openhands.agenthub.codewrite_agent.tools.bash import create_cmd_run_tool
 from openhands.agenthub.codewrite_agent.tools.browser import BrowserTool
 from openhands.agenthub.codewrite_agent.tools.finish import FinishTool
-from openhands.agenthub.codewrite_agent.tools.ipython import IPythonTool
 from openhands.agenthub.codewrite_agent.tools.llm_based_edit import LLMBasedFileEditTool
 from openhands.agenthub.codewrite_agent.tools.str_replace_editor import (
     create_str_replace_editor_tool,
@@ -22,7 +20,8 @@ from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message
 from openhands.events.action import Action, AgentFinishAction, MessageAction
 from openhands.events.event import Event
-from openhands.llm.llm import LLM
+from openhands.llm.llm_registry import LLMRegistry
+from openhands.llm.llm_utils import check_tools
 from openhands.memory.condenser import Condenser
 from openhands.memory.condenser.condenser import Condensation, View
 from openhands.memory.conversation_memory import ConversationMemory
@@ -65,31 +64,39 @@ class CodeWriteAgent(Agent):
 
     def __init__(
         self,
-        llm: LLM,
         config: AgentConfig,
+        llm_registry: LLMRegistry,
     ) -> None:
         """Initializes a new instance of the CodeActAgent class.
 
         Parameters:
-        - llm (LLM): The llm to be used by this agent
         - config (AgentConfig): The configuration for this agent
+        - llm_registry (LLMRegistry): Registry used to retrieve LLM instances
         """
-        super().__init__(llm, config)
+        super().__init__(config, llm_registry)
         self.pending_actions: deque[Action] = deque()
         self.reset()
         self.tools = self._get_tools()
 
-        self.prompt_manager = PromptManager(
-            prompt_dir=os.path.join(os.path.dirname(__file__), 'prompts'),
-        )
-
         # Create a ConversationMemory instance
         self.conversation_memory = ConversationMemory(self.config, self.prompt_manager)
 
-        self.condenser = Condenser.from_config(self.config.condenser)
+        self.condenser = Condenser.from_config(self.config.condenser, llm_registry)
         logger.debug(f'Using condenser: {type(self.condenser)}')
 
+        self.llm = self.llm_registry.get_router(self.config)
+
         self.response_to_actions_fn = codeact_function_calling.response_to_actions
+
+    @property
+    def prompt_manager(self) -> PromptManager:
+        if self._prompt_manager is None:
+            self._prompt_manager = PromptManager(
+                prompt_dir=os.path.join(os.path.dirname(__file__), 'prompts'),
+                system_prompt_filename=self.config.resolved_system_prompt_filename,
+            )
+
+        return self._prompt_manager
 
     def _get_tools(self) -> list[ChatCompletionToolParam]:
         # For these models, we use short tool descriptions ( < 1024 tokens)
@@ -175,37 +182,9 @@ class CodeWriteAgent(Agent):
         params: dict = {
             'messages': self.llm.format_messages_for_llm(messages),
         }
-        params['tools'] = self.tools
-
-        if self.mcp_tools:
-            # Only add tools with unique names
-            existing_names = {tool['function']['name'] for tool in params['tools']}
-            unique_mcp_tools = [
-                tool
-                for tool in self.mcp_tools
-                if tool['function']['name'] not in existing_names
-            ]
-
-            if self.llm.config.model == 'gemini-2.5-pro-preview-03-25':
-                logger.info(
-                    f'Removing the default fields from the MCP tools for {self.llm.config.model} '
-                    "since it doesn't support them and the request would crash."
-                )
-                # prevent mutation of input tools
-                unique_mcp_tools = copy.deepcopy(unique_mcp_tools)
-                # Strip off default fields that cause errors with gemini-preview
-                for tool in unique_mcp_tools:
-                    if 'function' in tool and 'parameters' in tool['function']:
-                        if 'properties' in tool['function']['parameters']:
-                            for prop_name, prop in tool['function']['parameters'][
-                                'properties'
-                            ].items():
-                                if 'default' in prop:
-                                    del prop['default']
-
-            params['tools'] += unique_mcp_tools
+        params['tools'] = check_tools(self.tools, self.llm.config)
         # log to litellm proxy if possible
-        params['extra_body'] = {'metadata': state.to_llm_metadata(agent_name=self.name)}
+        params['extra_body'] = {'metadata': state.to_llm_metadata(model_name=self.llm.config.model, agent_name=self.name)}
         response = self.llm.completion(**params)
         logger.debug(f'Response from LLM: {response}')
         actions = self.response_to_actions_fn(response)
