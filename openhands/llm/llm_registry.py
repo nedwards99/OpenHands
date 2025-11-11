@@ -11,6 +11,20 @@ from openhands.core.logger import openhands_logger as logger
 from openhands.llm.llm import LLM
 
 
+def build_agent_service_id(
+    agent_name: str | None,
+    llm_config_name: str | None = None,
+    suffix: str | None = None,
+) -> str:
+    """Create a service id for an agent/model pair, optionally scoped by suffix."""
+    name_part = agent_name or 'agent'
+    llm_part = llm_config_name or 'llm'
+    parts = ['agent', name_part, llm_part]
+    if suffix:
+        parts.append(suffix)
+    return '::'.join(parts)
+
+
 class RegistryEvent(BaseModel):
     llm: LLM
     service_id: str
@@ -39,8 +53,12 @@ class LLMRegistry:
             selected_agent_cls = agent_cls
 
         agent_name = selected_agent_cls if selected_agent_cls is not None else 'agent'
+        agent_config = self.config.get_agent_config(agent_name)
         llm_config = self.config.get_llm_config_from_agent(agent_name)
-        self.active_agent_llm: LLM = self.get_llm('agent', llm_config)
+        default_service_id = build_agent_service_id(
+            agent_name, agent_config.llm_config
+        )
+        self.active_agent_llm: LLM = self.get_llm(default_service_id, llm_config)
 
     def _create_new_llm(
         self, service_id: str, config: LLMConfig, with_listener: bool = True
@@ -112,7 +130,12 @@ class LLMRegistry:
     def get_active_llm(self) -> LLM:
         return self.active_agent_llm
 
-    def get_router(self, agent_config: AgentConfig) -> 'LLM':
+    def get_router(
+        self,
+        agent_config: AgentConfig,
+        agent_name: str | None = None,
+        service_id: str | None = None,
+    ) -> 'LLM':
         """
         Get a router instance that inherits from LLM.
         """
@@ -121,17 +144,19 @@ class LLMRegistry:
 
         router_name = agent_config.model_routing.router_name
 
+        service_id = service_id or build_agent_service_id(
+            agent_name, agent_config.llm_config
+        )
         if router_name == 'noop_router':
-            # # Return the main LLM directly (no routing)
-            # return self.get_llm_from_agent_config('agent', agent_config)
             # Return the LLM for this specific agent (no routing).
             # Derive a stable, per-agent service_id to avoid collisions.
-            return self.get_llm_from_agent_config('agent', agent_config)
+            return self.get_llm_from_agent_config(service_id, agent_config)
 
         return RouterLLM.from_config(
             agent_config=agent_config,
             llm_registry=self,
             retry_listener=self.retry_listner,
+            primary_service_id=service_id,
         )
 
     def subscribe(self, callback: Callable[[RegistryEvent], None]) -> None:

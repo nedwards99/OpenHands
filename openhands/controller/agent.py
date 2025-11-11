@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
-from openhands.llm.llm_registry import LLMRegistry
+from openhands.llm.llm_registry import LLMRegistry, build_agent_service_id
 
 if TYPE_CHECKING:
     from openhands.controller.state.state import State
@@ -41,8 +42,14 @@ class Agent(ABC):
         self,
         config: AgentConfig,
         llm_registry: LLMRegistry,
+        service_id: str | None = None,
     ):
-        self.llm = llm_registry.get_llm_from_agent_config('agent', config)
+        self.service_id = service_id or build_agent_service_id(
+            self.__class__.__name__,
+            getattr(config, 'llm_config', None),
+            suffix=str(uuid4()),
+        )
+        self.llm = llm_registry.get_llm_from_agent_config(self.service_id, config)
         self.llm_registry = llm_registry
         self.config = config
         self._complete = False

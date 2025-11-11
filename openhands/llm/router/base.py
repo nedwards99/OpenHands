@@ -6,6 +6,7 @@ from openhands.core.config import AgentConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message
 from openhands.llm.llm import LLM
+from openhands.llm.llm_registry import build_agent_service_id
 from openhands.llm.metrics import Metrics
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ class RouterLLM(LLM):
         self,
         agent_config: AgentConfig,
         llm_registry: 'LLMRegistry',
+        primary_service_id: str | None = None,
         service_id: str = 'router_llm',
         metrics: Metrics | None = None,
         retry_listener: Callable[[int, int], None] | None = None,
@@ -43,7 +45,12 @@ class RouterLLM(LLM):
         self.model_routing_config = agent_config.model_routing
 
         # Get the primary agent LLM
-        self.primary_llm = llm_registry.get_llm_from_agent_config('agent', agent_config)
+        self.primary_service_id = primary_service_id or build_agent_service_id(
+            None, agent_config.llm_config
+        )
+        self.primary_llm = llm_registry.get_llm_from_agent_config(
+            self.primary_service_id, agent_config
+        )
 
         # Instantiate all the LLM instances for routing
         llms_for_routing_config = self.model_routing_config.llms_for_routing
