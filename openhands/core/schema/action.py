@@ -59,6 +59,9 @@ class ActionType(str, Enum):
     use the finish action to stop working.
     """
 
+    INTENT_DECISION = 'intent_decision'
+    """Reports the intent analysis result back to the parent agent."""
+
     REJECT = 'reject'
     """If you're absolutely certain that you cannot complete the task with given requirements,
     use the reject action to stop working.

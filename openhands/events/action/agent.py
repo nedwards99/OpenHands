@@ -43,6 +43,24 @@ class AgentFinishAction(Action):
 
 
 @dataclass
+class IntentDecisionAction(Action):
+    """Intent helper reports whether the main agent needs to clarify with the user."""
+    needs_clarification: bool
+    summary: str = ''
+    reasons: str = ''
+    thought: str = ''
+    action: str = ActionType.INTENT_DECISION
+
+    @property
+    def message(self) -> str:
+        needs = bool(self.outputs.get('needs_clarification'))
+        reasons = self.outputs.get('reasons', '')
+        if needs:
+            # keep short; details are in reasons
+            return f'Intent analysis: clarification needed. Reasons: {reasons}'
+        return 'Intent analysis: no clarification needed.'
+
+@dataclass
 class AgentThinkAction(Action):
     """An action where the agent logs a thought.
 
