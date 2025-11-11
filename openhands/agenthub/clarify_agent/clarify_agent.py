@@ -20,9 +20,6 @@ from openhands.agenthub.clarify_agent.tools.condensation_request import (
     CondensationRequestTool,
 )
 from openhands.agenthub.clarify_agent.tools.finish import FinishTool
-# from openhands.agenthub.clarify_agent.tools.delegate_intent import (
-#     IntentAgentDelegateTool,
-# )
 from openhands.agenthub.clarify_agent.tools.ipython import IPythonTool
 from openhands.agenthub.clarify_agent.tools.llm_based_edit import LLMBasedFileEditTool
 from openhands.agenthub.clarify_agent.tools.str_replace_editor import (
@@ -38,7 +35,7 @@ from openhands.core.config import AgentConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message, TextContent
 
-from openhands.events.action import AgentFinishAction, MessageAction, Action, AgentDelegateAction
+from openhands.events.action import AgentFinishAction, MessageAction, Action, AgentDelegateAction, AgentThinkAction
 from openhands.events.event import Event, EventSource
 from openhands.events.observation.observation import Observation
 from openhands.events.observation.delegate import AgentDelegateObservation
@@ -54,6 +51,7 @@ from openhands.runtime.plugins import (
 from openhands.utils.prompt import PromptManager
 
 REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete."
+SAFE_TYPES = (MessageAction, AgentThinkAction)
 
 class ClarifyAgent(Agent):
     VERSION = '2.2'
@@ -92,9 +90,9 @@ class ClarifyAgent(Agent):
         """
         super().__init__(config, llm_registry)
         self.pending_actions: deque['Action'] = deque()
-        #self._next_reminder_message: str | None = None
         self._awaiting_intent: bool = False
         self._intent_verdict: dict[str, Any] | None = None
+        self._intent_delegate_initialized: bool = False
         self.reset()
         self.tools = self._get_tools()
 
@@ -105,8 +103,9 @@ class ClarifyAgent(Agent):
         logger.debug(f'Using condenser: {type(self.condenser)}')
 
         # Override with router if needed
-        self.llm = self.llm_registry.get_router(self.config)
-        self._intent_delegate_initialized = False
+        self.llm = self.llm_registry.get_router(
+            self.config, agent_name=self.name, service_id=self.service_id
+        )
 
     @property
     def prompt_manager(self) -> PromptManager:
@@ -144,8 +143,6 @@ class ClarifyAgent(Agent):
         tools.append(ClarifyTool)
         if self.config.enable_finish:
             tools.append(FinishTool)
-        # Add tool for delegating to subagent
-        #tools.append(IntentAgentDelegateTool)
         if self.config.enable_condensation_request:
             tools.append(CondensationRequestTool)
         if self.config.enable_browsing:
@@ -200,7 +197,13 @@ class ClarifyAgent(Agent):
         """
         # Continue with pending actions if any
         if self.pending_actions:
-            return self.pending_actions.popleft()
+            if self._awaiting_intent and not self._intent_verdict:
+                return self.pending_actions.popleft()  # still waiting, keep draining
+            if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+                self._prune_pending_actions_for_clarify()
+                # fall through to enqueue clarify action below
+            else:
+                return self.pending_actions.popleft()
 
         # if we're done, go back
         latest_user_message = state.get_last_user_message()
@@ -230,32 +233,29 @@ class ClarifyAgent(Agent):
             if initial_user_message is None:
                 raise
 
-        # reminder_message = """Before proceeding, carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should. If you have identified ambiguity, immediately call the `clarify` tool. Otherwise, proceed normally. Only skip asking questions when you are absolutely sure all relevant information is complete."""
-
         # Delegate to IntentAgent for ambiguity.
         # Skip delegation on the very first turn so the main agent can process the initial instructions.
-        if not getattr(self, '_intent_delegate_initialized', False):
+        if not self._intent_delegate_initialized:
             self._intent_delegate_initialized = True
         elif not self._awaiting_intent:
-
-            self._awaiting_intent = True
             self._intent_verdict = None
+            # Ask IntentAgent for a verdict
             latest_user_message = state.get_last_user_message()
-            prompt_text = (
-                latest_user_message.content.strip()
-                if latest_user_message and latest_user_message.content
-                else '(no new user message)'
-            )
+            # prompt_text = (
+            #     latest_user_message.content.strip()
+            #     if latest_user_message and latest_user_message.content
+            #     else '(no new user message)'
+            # )
+            self._awaiting_intent = True
             return AgentDelegateAction(
                     agent='IntentAgent',
                     # Pass latest user context and mark delegate as persistent
                     inputs={
-                        'prompt': f'{prompt_text}\n\n{REMINDER_MESSAGE}',
-                        'persistent': True,
+                        'prompt': f'{REMINDER_MESSAGE}',
                     },
                 )
 
-        elif self._awaiting_intent:
+        else:
 
             self._intent_verdict = self._read_intent_verdict(state.history)
             if self._intent_verdict is None:
@@ -264,6 +264,7 @@ class ClarifyAgent(Agent):
                 self._awaiting_intent = False
 
         logger.warning(f"Intent verdict: {self._intent_verdict}")
+
         if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
             reason = self._intent_verdict.get('reasons', 'No reasons provided.')
             if reason:
@@ -279,8 +280,8 @@ class ClarifyAgent(Agent):
             params: dict = {
                 'messages': self.llm.format_messages_for_llm(messages),
             }
-            # Restrict tools to Clarify (and maybe Finish) for this turn.
-            params['tools'] = check_tools([ClarifyTool], self.llm.config) #, FinishTool
+            # Restrict tools to Clarify for this turn.
+            params['tools'] = check_tools([ClarifyTool], self.llm.config)
             params['extra_body'] = {
                 'metadata': state.to_llm_metadata(
                     model_name=self.llm.config.model, agent_name=self.name
@@ -308,21 +309,19 @@ class ClarifyAgent(Agent):
 
         actions = self.response_to_actions(response)
         logger.debug(f'Actions after response_to_actions: {actions}')
-        # # Add ambiguity reminder
-        # reminder_message = """Before selecting your next tool or drafting a reply, first reason explicitly about whether you have enough clarity. After stating that reasoning, write a line formatted as `Ambiguity assessment: <clear|ambiguous>.` If the assessment is `ambiguous`, immediately call the `clarify` tool with questions for the user. If it is `clear`, proceed normally.'
-        # """
-        # #Use latest_user_message to add user context
 
-        # #if self._next_reminder_message:
-        # reminder_action = MessageAction(
-        #         content=reminder_message,
-        #     )
-        # #reminder_action._source = EventSource.SYSTEM
-        # self.pending_actions.appendleft(reminder_action)
-            #self._next_reminder_message = None
         for action in actions:
             self.pending_actions.append(action)
         return self.pending_actions.popleft()
+
+    def _prune_pending_actions_for_clarify(self) -> None:
+        kept: deque[Action] = deque()
+        while self.pending_actions:
+            action = self.pending_actions.popleft()
+            if isinstance(action, SAFE_TYPES):
+                kept.append(action)
+            # else drop FileReadAction, FileEditAction, AgentFinishAction, etc.
+        self.pending_actions = kept
 
     def _has_real_user_message(self, history: list[Event]) -> bool:
         example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
@@ -352,11 +351,6 @@ class ClarifyAgent(Agent):
             latest = state.get_last_user_message().content.strip()
         except AttributeError:
             latest = '(no user message found)'
-        # summary = '\n'.join(
-        #     self._summarize_event_for_intent(ev)
-        #     for ev in state.history[-20:]
-        #     if isinstance(ev, (MessageAction, Observation))
-        # ) or '(no recent events)'
         summary = '\n'.join(
             ev.content.strip()
             for ev in state.history
@@ -472,15 +466,6 @@ class ClarifyAgent(Agent):
                 break
 
         if intent_outputs is None:
-            # # This should not happen in a valid conversation
-            # logger.error(
-            #     f'CRITICAL: Could not find the latest Intent Agent output in the full {len(history)} events history.'
-            # )
-            # # Depending on desired robustness, could raise error or create a dummy action
-            # # and log the error
-            # raise ValueError(
-            #     'Latest Intent Agent output not found in history. Please report this issue.'
-            # )
             logger.warning('Intent agent verdict not yet available; still waiting.')
             return None
 
