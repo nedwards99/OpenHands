@@ -106,6 +106,7 @@ class ClarifyAgent(Agent):
 
         # Override with router if needed
         self.llm = self.llm_registry.get_router(self.config)
+        self._intent_delegate_initialized = False
 
     @property
     def prompt_manager(self) -> PromptManager:
@@ -222,29 +223,45 @@ class ClarifyAgent(Agent):
             f'Processing {len(condensed_history)} events from a total of {len(state.history)} events'
         )
 
-        initial_user_message = self._get_initial_user_message(state.history)
+        try:
+            initial_user_message = self._get_initial_user_message(state.history)
+        except ValueError:
+            initial_user_message = state.get_last_user_message()
+            if initial_user_message is None:
+                raise
 
         # reminder_message = """Before proceeding, carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should. If you have identified ambiguity, immediately call the `clarify` tool. Otherwise, proceed normally. Only skip asking questions when you are absolutely sure all relevant information is complete."""
 
-        # Delegate to IntentAgent for ambiguity
-        if not self._awaiting_intent:
+        # Delegate to IntentAgent for ambiguity.
+        # Skip delegation on the very first turn so the main agent can process the initial instructions.
+        if not getattr(self, '_intent_delegate_initialized', False):
+            self._intent_delegate_initialized = True
+        elif not self._awaiting_intent:
 
             self._awaiting_intent = True
             self._intent_verdict = None
-            summary_message = self._build_intent_context(state)
+            latest_user_message = state.get_last_user_message()
+            prompt_text = (
+                latest_user_message.content.strip()
+                if latest_user_message and latest_user_message.content
+                else '(no new user message)'
+            )
             return AgentDelegateAction(
                     agent='IntentAgent',
-                    # Pass in intent context
-                    inputs={'prompt': summary_message + '\n' + REMINDER_MESSAGE},
+                    # Pass latest user context and mark delegate as persistent
+                    inputs={
+                        'prompt': f'{prompt_text}\n\n{REMINDER_MESSAGE}',
+                        'persistent': True,
+                    },
                 )
 
         elif self._awaiting_intent:
 
             self._intent_verdict = self._read_intent_verdict(state.history)
-            self._awaiting_intent = False
             if self._intent_verdict is None:
                 logger.warning('Waiting for IntentAgent verdict…')
-            self._awaiting_intent = False
+            else:
+                self._awaiting_intent = False
 
         logger.warning(f"Intent verdict: {self._intent_verdict}")
         if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
@@ -260,7 +277,7 @@ class ClarifyAgent(Agent):
             messages.append(Message(role='system', content=[TextContent(text=reminder)]))
 
             params: dict = {
-                'messages': messages,
+                'messages': self.llm.format_messages_for_llm(messages),
             }
             # Restrict tools to Clarify (and maybe Finish) for this turn.
             params['tools'] = check_tools([ClarifyTool], self.llm.config) #, FinishTool
@@ -455,15 +472,17 @@ class ClarifyAgent(Agent):
                 break
 
         if intent_outputs is None:
-            # This should not happen in a valid conversation
-            logger.error(
-                f'CRITICAL: Could not find the latest Intent Agent output in the full {len(history)} events history.'
-            )
-            # Depending on desired robustness, could raise error or create a dummy action
-            # and log the error
-            raise ValueError(
-                'Latest Intent Agent output not found in history. Please report this issue.'
-            )
+            # # This should not happen in a valid conversation
+            # logger.error(
+            #     f'CRITICAL: Could not find the latest Intent Agent output in the full {len(history)} events history.'
+            # )
+            # # Depending on desired robustness, could raise error or create a dummy action
+            # # and log the error
+            # raise ValueError(
+            #     'Latest Intent Agent output not found in history. Please report this issue.'
+            # )
+            logger.warning('Intent agent verdict not yet available; still waiting.')
+            return None
 
         return intent_outputs
 
