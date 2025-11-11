@@ -62,6 +62,7 @@ from openhands.events.action import (
     CmdRunAction,
     FileEditAction,
     FileReadAction,
+    IntentDecisionAction,
     IPythonRunCellAction,
     MessageAction,
     NullAction,
@@ -82,7 +83,6 @@ from openhands.events.observation import (
 )
 from openhands.events.serialization.event import truncate_content
 from openhands.llm.metrics import Metrics
-from openhands.llm.tool_names import CLARIFY_TOOL_NAME
 from openhands.runtime.runtime_status import RuntimeStatus
 from openhands.server.services.conversation_stats import ConversationStats
 from openhands.storage.files import FileStore
@@ -160,12 +160,6 @@ class AgentController:
         self.headless_mode = headless_mode
         self.is_delegate = is_delegate
         self.conversation_stats = conversation_stats
-
-        # # Track intent delegation
-        # self._intent_delegate_run = False
-        # self._intent_delegate_pending: MessageAction | None = None
-        # self._intent_delegate_ready: bool = False
-        # self._intent_delegate_processing: bool = False
 
         # the event stream must be set before maybe subscribing to it
         self.event_stream = event_stream
@@ -515,7 +509,6 @@ class AgentController:
                 message_for_delegate = MessageAction(
                     content='TASK: ' + action.inputs['task']
                 )
-
             if message_for_delegate is not None:
                 await self.delegate.set_agent_state_to(AgentState.RUNNING)
                 self.event_stream.add_event(
@@ -523,6 +516,14 @@ class AgentController:
                     EventSource.USER,
                 )
             return
+
+        elif isinstance(action, IntentDecisionAction) and self.is_delegate:
+            self.state.outputs = {
+                'needs_clarification': bool(getattr(action, 'needs_clarification', False)),
+                'message': getattr(action, 'message', ''),
+                'reasons': getattr(action, 'reasons', ''),
+            }
+            await self.set_agent_state_to(AgentState.FINISHED)
 
         elif isinstance(action, AgentFinishAction):
             self.state.outputs = action.outputs
@@ -555,26 +556,6 @@ class AgentController:
 
             self._pending_action = None
 
-            # if isinstance(observation, AgentDelegateObservation):
-            #     self._intent_delegate_ready = True
-            #     reply_content = ''
-            #     if isinstance(observation.outputs, dict):
-            #         reply_content = observation.outputs.get('user_response', '') or ''
-
-            #     if reply_content.strip():
-            #         self.event_stream.add_event(
-            #             MessageAction(content=reply_content, wait_for_response=False),
-            #             EventSource.USER,
-            #         )
-            #     elif self._intent_delegate_pending is not None:
-            #         try:
-            #             loop = asyncio.get_running_loop()
-            #         except RuntimeError:
-            #             loop = asyncio.get_event_loop()
-            #         loop.create_task(self._handle_message_action(self._intent_delegate_pending))
-            #         self._intent_delegate_pending = None
-            #         self._intent_delegate_ready = False
-
             if self.state.agent_state == AgentState.USER_CONFIRMED:
                 await self.set_agent_state_to(AgentState.RUNNING)
             if self.state.agent_state == AgentState.USER_REJECTED:
@@ -587,22 +568,6 @@ class AgentController:
         Args:
             action (MessageAction): The message action to handle.
         """
-        # if (
-        #     not self._intent_delegate_processing
-        #     and self._intent_delegate_pending is not None
-        #     and self._intent_delegate_ready
-        #     and action.source == EventSource.USER
-        #     and action.id != self._intent_delegate_pending.id
-        # ):
-        #     self._intent_delegate_processing = True
-        #     pending_message = self._intent_delegate_pending
-        #     self._intent_delegate_pending = None
-        #     self._intent_delegate_ready = False
-        #     try:
-        #         await self._handle_message_action(pending_message)
-        #     finally:
-        #         self._intent_delegate_processing = False
-
         if action.source == EventSource.USER:
             # Use info level if LOG_ALL_EVENTS is set
             log_level = (
@@ -619,28 +584,6 @@ class AgentController:
             is_first_user_message = (
                 action.id == first_user_message.id if first_user_message else False
             )
-
-            # Delegate to Intent Agent on first message
-            # if (
-            #     not self.is_delegate
-            #     and self.agent.name == 'ClarifyAgent'
-            #     and is_first_user_message
-            #     and not self._intent_delegate_run
-            # ):
-            #     self._intent_delegate_run = True
-            #     self._intent_delegate_pending = action
-            #     self._intent_delegate_ready = False
-            #     delegate_action = AgentDelegateAction(
-            #         agent='IntentAgent',
-            #         inputs={
-            #             'prompt': action.content,
-            #             'message_id': action.id,
-            #         },
-            #     )
-            #     self._pending_action = delegate_action
-            #     self.event_stream.add_event(delegate_action, EventSource.AGENT)
-            #     return
-
             recall_type = (
                 RecallType.WORKSPACE_CONTEXT
                 if is_first_user_message
@@ -659,59 +602,6 @@ class AgentController:
             # If the agent is waiting for a response, set the appropriate state
             if action.wait_for_response:
                 await self.set_agent_state_to(AgentState.AWAITING_USER_INPUT)
-
-    def _record_tool_usage(self, action: Action) -> None:
-        """Records tool usage for the agent based on the action taken.
-
-        Args:
-            action (Action): The action taken by the agent.
-        """
-        data = self.state.get_clarify_usage()
-        turn = self.state.iteration_flag.current_value
-
-        if hasattr(action, 'tool_call_metadata') and action.tool_call_metadata and action.tool_call_metadata.function_name == CLARIFY_TOOL_NAME:
-            data['last_turn'] = turn
-            data['turns_since_last'] = 0
-            data['total_calls'] += 1
-            data['reminders_sent'] = 0
-        else:
-            data['turns_since_last'] = (
-                turn - data['last_turn'] if data['last_turn'] is not None else data['turns_since_last'] + 1
-            )
-
-    def enforce_clarify_requirement(self, action: Action) -> None:
-        """Enforces the clarify requirement based on the action taken.
-
-        Args:
-            action (Action): The action taken by the agent.
-        """
-        if isinstance(action, MessageAction) and not getattr(action, 'tool_call_metadata', None):
-            return
-        if (
-            hasattr(action, 'tool_call_metadata')
-            and action.tool_call_metadata
-            and action.tool_call_metadata.function_name == CLARIFY_TOOL_NAME
-        ):
-            return
-
-        data = self.state.get_clarify_usage()
-        max_gap = self.agent.config.clarify_turn_window
-        reminder_limit = self.agent.config.clarify_reminder_limit
-
-        if data['turns_since_last'] > max_gap:
-            if data['reminders_sent'] < reminder_limit:
-                data['reminders_sent'] += 1
-                raise FunctionCallValidationError(
-                    f'Clarify tool must be used at least once every {max_gap} turns. Please use the clarify tool before proceeding.',
-                )
-            else:
-                # raise FunctionCallValidationError(
-                #     f'Clarify tool must be used before other tools after {max_gap} turns.'
-                # )
-                data['reminders_sent'] = 0
-                data['turns_since_last'] = 0
-                data['last_turn'] = self.state.iteration_flag.current_value
-                return
 
     def _reset(self) -> None:
         """Resets the agent controller."""
@@ -753,10 +643,6 @@ class AgentController:
         # reset the pending action, this will be called when the agent is STOPPED or ERROR
         self._pending_action = None
         self.agent.reset()
-
-        # self._intent_delegate_pending = None
-        # self._intent_delegate_ready = False
-        # self._intent_delegate_processing = False
 
     async def set_agent_state_to(self, new_state: AgentState) -> None:
         """Updates the agent's state and handles side effects. Can emit events to the event stream.
@@ -865,7 +751,9 @@ class AgentController:
             # global metrics should be shared between parent and child
             metrics=self.state.metrics,
             # start on top of the stream
-            start_id=self.event_stream.get_latest_event_id() + 1,
+            #start_id=self.event_stream.get_latest_event_id() + 1,
+            # provide delegate starting point for history
+            start_id=self.state.start_id,
             parent_metrics_snapshot=self.state_tracker.get_metrics_snapshot(),
             parent_iteration=self.state.iteration_flag.current_value,
         )
@@ -924,7 +812,7 @@ class AgentController:
             # TODO: replace this with AI-generated summary (#2395)
             # Filter out metrics from the formatted output to avoid clutter
             display_outputs = {
-                k: v for k, v in delegate_outputs.items() if k != 'metrics'
+                k: v for k, v in delegate_outputs.items()# if k != 'metrics'
             }
             formatted_output = ', '.join(
                 f'{key}: {value}' for key, value in display_outputs.items()
@@ -1012,11 +900,6 @@ class AgentController:
         else:
             try:
                 action = self.agent.step(self.state)
-
-                # Enforce clarify tool every n turns
-                #self.enforce_clarify_requirement(action)
-                #self._record_tool_usage(action)
-
                 if action is None:
                     raise LLMNoActionError('No action was returned')
                 action._source = EventSource.AGENT  # type: ignore [attr-defined]
