@@ -84,7 +84,9 @@ class CodeWriteAgent(Agent):
         self.condenser = Condenser.from_config(self.config.condenser, llm_registry)
         logger.debug(f'Using condenser: {type(self.condenser)}')
 
-        self.llm = self.llm_registry.get_router(self.config)
+        self.llm = self.llm_registry.get_router(
+            self.config, agent_name=self.name, service_id=self.service_id
+        )
 
         self.response_to_actions_fn = codeact_function_calling.response_to_actions
 
