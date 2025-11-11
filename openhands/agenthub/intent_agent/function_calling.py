@@ -3,8 +3,9 @@ import json
 from litellm import ModelResponse
 
 from openhands.agenthub.intent_agent.tools import (
-    FinishTool,
     ThinkTool,
+    ClarifyDecisionTool,
+    FinishTool,
     create_cmd_run_tool,
     create_str_replace_editor_tool,
 )
@@ -23,6 +24,7 @@ from openhands.events.action import (
     CmdRunAction,
     FileEditAction,
     FileReadAction,
+    IntentDecisionAction,
     IPythonRunCellAction,
     MessageAction,
     TaskTrackingAction,
@@ -106,10 +108,13 @@ def response_to_actions(
                         ) from e
                 set_security_risk(action, arguments)
 
-            # elif tool_call.function.name == FinishTool['function']['name']:
-            #     action = AgentFinishAction(
-            #         final_thought=arguments.get('message', ''),
-            #     )
+            elif tool_call.function.name == ClarifyDecisionTool['function']['name']:
+                action = IntentDecisionAction(
+                    needs_clarification=bool(arguments.get('needs_clarification')),
+                    summary=arguments.get('message', ''),
+                    reasons=arguments.get('reasons', ''),
+                )
+
             elif tool_call.function.name == FinishTool['function']['name']:
                 outputs = {
                     'needs_clarification': bool(arguments.get('needs_clarification')),

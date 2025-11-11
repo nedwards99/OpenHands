@@ -1,7 +1,7 @@
 from .bash import create_cmd_run_tool
 from .browser import BrowserTool
 from .clarify import ClarifyTool
-from .finish import FinishTool
+from .clarify_decision import ClarifyDecisionTool
 from .condensation_request import CondensationRequestTool
 from .finish import FinishTool
 from .ipython import IPythonTool
@@ -14,6 +14,7 @@ __all__ = [
     'ClarifyTool',
     'CondensationRequestTool',
     'create_cmd_run_tool',
+    'ClarifyDecisionTool',
     'FinishTool',
     'IPythonTool',
     'LLMBasedFileEditTool',
