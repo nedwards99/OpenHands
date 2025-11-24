@@ -51,6 +51,8 @@ from openhands.runtime.plugins import (
 from openhands.utils.prompt import PromptManager
 
 REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete."
+# Modified version for IntentLiteAgent
+#REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return \"Verdict: Ambiguous\". Only skip asking questions when you are absolutely sure all relevant information is complete."
 SAFE_TYPES = (MessageAction, AgentThinkAction)
 
 class ClarifyAgent(Agent):
@@ -93,6 +95,9 @@ class ClarifyAgent(Agent):
         self._awaiting_intent: bool = False
         self._intent_verdict: dict[str, Any] | None = None
         self._intent_delegate_initialized: bool = False
+        self._awaiting_clarify_response = False
+        self._clarify_request_user_id = None
+        self._pending_post_clarify_turn = False
         extended_cfg = {}
         try:
             extended_cfg = self.config.extended.model_dump()
@@ -204,9 +209,25 @@ class ClarifyAgent(Agent):
         - BrowseInteractiveAction(browser_actions) - interact with browser using specified actions
         - MCPAction(name, arguments) - interact with MCP server tools
         """
+        latest_user_message = state.get_last_user_message()
+
+        if self._awaiting_clarify_response:
+            latest_id = latest_user_message.id if latest_user_message else None
+            if latest_id is None or latest_id == self._clarify_request_user_id:
+                return AgentThinkAction('Waiting for user clarification.')
+            # user replied → give the main agent one turn
+            self._awaiting_clarify_response = False
+            self._clarify_request_user_id = None
+            self._pending_post_clarify_turn = True
+
+        if self._pending_post_clarify_turn:
+            # skip delegate logic exactly once so the main agent can act
+            self._pending_post_clarify_turn = False
+            # keep draining pending actions / run the normal branch
+
         # Continue with pending actions if any
         if self.pending_actions:
-            logger.warning(f"Pending actions: {self.pending_actions}")
+            #logger.warning(f"Pending actions: {self.pending_actions}")
             if self._awaiting_intent and not self._intent_verdict:
                 return self.pending_actions.popleft()  # still waiting, keep draining
             if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
@@ -216,7 +237,6 @@ class ClarifyAgent(Agent):
                 return self.pending_actions.popleft()
 
         # if we're done, go back
-        latest_user_message = state.get_last_user_message()
         if latest_user_message and latest_user_message.content.strip() == '/exit':
             return AgentFinishAction()
 
@@ -257,9 +277,10 @@ class ClarifyAgent(Agent):
             #     else '(no new user message)'
             # )
             self._awaiting_intent = True
-            logger.warning(f'{self._intent_delegate_agent}, {type(self._intent_delegate_agent)}')
+            #logger.warning(f'{self._intent_delegate_agent}, {type(self._intent_delegate_agent)}')
             return AgentDelegateAction(
                     agent=self._intent_delegate_agent,
+                    #agent='IntentAgent',
                     # Pass latest user context and mark delegate as persistent
                     inputs={
                         'prompt': f'{REMINDER_MESSAGE}',
@@ -277,6 +298,10 @@ class ClarifyAgent(Agent):
         logger.warning(f"Intent verdict: {self._intent_verdict}")
 
         if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+            self._awaiting_clarify_response = True
+            self._clarify_request_user_id = (
+                latest_user_message.id if latest_user_message else None
+            )
             logger.warning("IntentAgent requested clarification; invoking ClarifyTool.")
             reason = self._intent_verdict.get('reasons', 'No reasons provided.')
             if reason:
@@ -294,6 +319,7 @@ class ClarifyAgent(Agent):
             }
             # Restrict tools to Clarify for this turn.
             params['tools'] = check_tools([ClarifyTool], self.llm.config)
+            params['tool_choice'] = {'type': 'function', 'function': {'name': ClarifyTool['function']['name']}}
             params['extra_body'] = {
                 'metadata': state.to_llm_metadata(
                     model_name=self.llm.config.model, agent_name=self.name
@@ -308,7 +334,7 @@ class ClarifyAgent(Agent):
 
             messages = self._get_messages(condensed_history, initial_user_message)
             params: dict = {
-                'messages': messages,
+                'messages': self.llm.format_messages_for_llm(messages),
             }
             params['tools'] = check_tools(self.tools, self.llm.config)
             params['extra_body'] = {
@@ -457,15 +483,15 @@ class ClarifyAgent(Agent):
         if self.llm.is_caching_prompt_active():
             self.conversation_memory.apply_prompt_caching(messages)
 
-        example = self.prompt_manager.get_in_context_example(tools=self.tools)
-        if example:
-            for msg in messages:
-                if msg.role == 'user':
-                    for content in msg.content:
-                        if isinstance(content, TextContent):
-                            content.text = f"{example}\n\n{content.text}"
-                            break
-                break
+        # example = self.prompt_manager.get_in_context_example(tools=self.tools)
+        # if example:
+        #     for msg in messages:
+        #         if msg.role == 'user':
+        #             for content in msg.content:
+        #                 if isinstance(content, TextContent):
+        #                     content.text = f"{example}\n\n{content.text}"
+        #                     break
+        #         break
 
         return messages
 
