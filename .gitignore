@@ -1,6 +1,8 @@
 run_openhands_cli.sh
 run_openhands_cli_phase2.sh
 
+trajectories/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
