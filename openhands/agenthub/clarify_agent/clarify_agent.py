@@ -93,6 +93,15 @@ class ClarifyAgent(Agent):
         self._awaiting_intent: bool = False
         self._intent_verdict: dict[str, Any] | None = None
         self._intent_delegate_initialized: bool = False
+        extended_cfg = {}
+        try:
+            extended_cfg = self.config.extended.model_dump()
+        except AttributeError:
+            extended_cfg = {}
+        logger.warning(f'Extended config: {extended_cfg}')
+        self._intent_delegate_agent = extended_cfg.get(
+            'intent_delegate_agent', 'IntentAgent'
+        )
         self.reset()
         self.tools = self._get_tools()
 
@@ -197,6 +206,7 @@ class ClarifyAgent(Agent):
         """
         # Continue with pending actions if any
         if self.pending_actions:
+            logger.warning(f"Pending actions: {self.pending_actions}")
             if self._awaiting_intent and not self._intent_verdict:
                 return self.pending_actions.popleft()  # still waiting, keep draining
             if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
@@ -240,15 +250,16 @@ class ClarifyAgent(Agent):
         elif not self._awaiting_intent:
             self._intent_verdict = None
             # Ask IntentAgent for a verdict
-            latest_user_message = state.get_last_user_message()
+            # latest_user_message = state.get_last_user_message()
             # prompt_text = (
             #     latest_user_message.content.strip()
             #     if latest_user_message and latest_user_message.content
             #     else '(no new user message)'
             # )
             self._awaiting_intent = True
+            logger.warning(f'{self._intent_delegate_agent}, {type(self._intent_delegate_agent)}')
             return AgentDelegateAction(
-                    agent='IntentAgent',
+                    agent=self._intent_delegate_agent,
                     # Pass latest user context and mark delegate as persistent
                     inputs={
                         'prompt': f'{REMINDER_MESSAGE}',
@@ -266,6 +277,7 @@ class ClarifyAgent(Agent):
         logger.warning(f"Intent verdict: {self._intent_verdict}")
 
         if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+            logger.warning("IntentAgent requested clarification; invoking ClarifyTool.")
             reason = self._intent_verdict.get('reasons', 'No reasons provided.')
             if reason:
                 reminder = (

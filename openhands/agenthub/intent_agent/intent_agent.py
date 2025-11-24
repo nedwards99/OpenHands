@@ -1,4 +1,5 @@
 import os
+import re
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,8 @@ from openhands.controller.state.state import State
 from openhands.core.config import AgentConfig
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message
-from openhands.events.action import AgentFinishAction, AgentThinkAction, MessageAction
+from openhands.events.action import Action, AgentFinishAction, AgentThinkAction, MessageAction
+from openhands.events.action.agent import IntentDecisionAction
 from openhands.events.event import Event
 from openhands.llm.llm_utils import check_tools
 from openhands.memory.condenser import Condenser
@@ -210,7 +212,12 @@ class IntentAgent(Agent):
         params: dict = {
             'messages': messages,
         }
-        params['tools'] = check_tools(self.tools, self.llm.config)
+        #params['tools'] = check_tools(self.tools, self.llm.config)
+        params['tools'] = check_tools([ClarifyDecisionTool], self.llm.config)
+        params['tool_choice'] = {
+            'type': 'function',
+            'function': {'name': ClarifyDecisionTool['function']['name']},
+        }
         params['extra_body'] = {
             'metadata': state.to_llm_metadata(
                 model_name=self.llm.config.model, agent_name=self.name
@@ -305,7 +312,81 @@ class IntentAgent(Agent):
         return messages
 
     def response_to_actions(self, response: 'ModelResponse') -> list['Action']:
+        logger.warning(f'IntentAgent response content: {response}')
         return intent_function_calling.response_to_actions(
             response,
             mcp_tool_names=list(self.mcp_tools.keys()),
         )
+
+class IntentLiteAgent(IntentAgent):
+    """Lightweight ambiguity checker that emits a plain verdict."""
+
+    def _get_tools(self) -> list['ChatCompletionToolParam']:
+        """Tools available for intent inspection."""
+        return []
+
+    def _parse_verdict(self, response: ModelResponse) -> IntentDecisionAction:
+        """
+        Extract reasoning + `Verdict: ...` line from a free-form response.
+        Falls back to treating the entire message as reasoning and flags
+        ambiguity if the verdict line is missing.
+        """
+        choice = response.choices[0]
+        content = (choice.message.content or '').strip()
+
+        match = re.search(r'Verdict:\s*(Ambiguous|Clear)', content, flags=re.IGNORECASE)
+        if match:
+            verdict = match.group(1).lower()
+            reasoning = content[: match.start()].strip()
+            needs = verdict == 'ambiguous'
+        else:
+            reasoning = content
+            needs = False
+
+        return IntentDecisionAction(
+            needs_clarification=needs,
+            reasons=reasoning,
+        )
+
+    def step(self, state: State) -> IntentDecisionAction:
+        condensed_history: list[Event] = []
+        match self.condenser.condensed_history(state):
+            case View(events=events):
+                condensed_history = events
+
+            case Condensation(action=condensation_action):
+                return condensation_action
+
+        logger.debug(
+            f'Processing {len(condensed_history)} events from a total of {len(state.history)} events'
+        )
+        initial_user = self._get_initial_user_message(state.history)
+        messages = self._get_messages(condensed_history, initial_user)
+
+        response = self.llm.completion(
+            messages=self.llm.format_messages_for_llm(messages)
+        )
+        return self._parse_verdict(response)
+
+    # def response_to_actions(
+    #     self,
+    #     response: ModelResponse,
+    #     mcp_tool_names: list[str] | None = None,
+    # ) -> list[Action]:
+    #     content = response.choices[0].message.content.strip()
+    #     logger.warning(f'IntentLiteAgent response content: {content}')
+    #     match = re.search(r'Verdict:\s*(Ambiguous|Clear)', content, flags=re.IGNORECASE)
+    #     if match:
+    #         verdict = match.group(1).lower()
+    #         reasoning = content[: match.start()].strip()
+    #         needs = verdict == 'ambiguous'
+    #     else:
+    #         reasoning = content
+    #         needs = False
+
+    #     return [
+    #         IntentDecisionAction(
+    #             needs_clarification=needs,
+    #             reasons=reasoning,
+    #         )
+    #     ]
