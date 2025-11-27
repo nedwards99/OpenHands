@@ -113,7 +113,7 @@ class LLM(RetryMixin, DebugMixin):
         kwargs: dict[str, Any] = {
             'temperature': self.config.temperature,
             'max_completion_tokens': self.config.max_output_tokens,
-            'max_tokens': self.config.max_output_tokens
+            'max_tokens': self.config.max_output_tokens,
         }
         if self.config.top_k is not None:
             # openai doesn't expose top_k
@@ -207,7 +207,7 @@ class LLM(RetryMixin, DebugMixin):
         ):
             kwargs.pop('top_p', None)
 
-        logger.debug(f"LLM call with kwargs: {kwargs}")
+        logger.debug(f'LLM call with kwargs: {kwargs}')
         self._completion = partial(
             litellm_completion,
             model=self.config.model,

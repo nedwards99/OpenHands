@@ -250,7 +250,11 @@ class ConversationMemory:
                 ]
 
             if isinstance(action, AgentDelegateAction) and tool_metadata is None:
-                summary = action.inputs.get('prompt') if isinstance(action.inputs, dict) else None
+                summary = (
+                    action.inputs.get('prompt')
+                    if isinstance(action.inputs, dict)
+                    else None
+                )
                 if summary:
                     text = f'Delegating to {action.agent}: {summary}'
                 else:

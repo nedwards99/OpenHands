@@ -20,11 +20,11 @@ from openhands.core.exceptions import (
 )
 from openhands.llm.tool_names import (
     BROWSER_TOOL_NAME,
+    CLARIFY_TOOL_NAME,
     EXECUTE_BASH_TOOL_NAME,
     FINISH_TOOL_NAME,
     LLM_BASED_EDIT_TOOL_NAME,
     STR_REPLACE_EDITOR_TOOL_NAME,
-    CLARIFY_TOOL_NAME,
 )
 
 # Inspired by: https://docs.together.ai/docs/llama-3-function-calling#function-calling-w-llama-31-70b
@@ -161,7 +161,7 @@ Press CTRL+C to quit
 ASSISTANT:
 The server is running on port 5000 with PID 124. You can access the list of numbers by visiting http://127.0.0.1:5000. If you have any further questions, feel free to ask!
 """,
-    'run_server_clarify_a': """
+        'run_server_clarify_a': """
 ASSISTANT:
 Let me run the Python file for you:
 <function=execute_bash>

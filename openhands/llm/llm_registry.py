@@ -55,9 +55,7 @@ class LLMRegistry:
         agent_name = selected_agent_cls if selected_agent_cls is not None else 'agent'
         agent_config = self.config.get_agent_config(agent_name)
         llm_config = self.config.get_llm_config_from_agent(agent_name)
-        default_service_id = build_agent_service_id(
-            agent_name, agent_config.llm_config
-        )
+        default_service_id = build_agent_service_id(agent_name, agent_config.llm_config)
         self.active_agent_llm: LLM = self.get_llm(default_service_id, llm_config)
 
     def _create_new_llm(
@@ -92,7 +90,7 @@ class LLMRegistry:
         if existing:
             if existing.config != llm_config:
                 logger.info(
-                    "Service %s LLM config changed from %s to %s; refreshing instance",
+                    'Service %s LLM config changed from %s to %s; refreshing instance',
                     service_id,
                     existing.config.model,
                     llm_config.model,

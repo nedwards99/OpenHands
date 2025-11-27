@@ -5,11 +5,11 @@ load_dotenv()
 
 from openhands.agenthub import (  # noqa: E402
     browsing_agent,
+    clarify_agent,
     codeact_agent,
     codewrite_agent,
-    clarify_agent,
-    intent_agent,
     dummy_agent,
+    intent_agent,
     loc_agent,
     readonly_agent,
     visualbrowsing_agent,

@@ -27,6 +27,7 @@ from openhands.core.message import Message
 from openhands.events.action import Action, AgentFinishAction, AgentThinkAction, MessageAction
 from openhands.events.action.agent import IntentDecisionAction
 from openhands.events.event import Event
+from openhands.llm.llm import ModelResponse
 from openhands.llm.llm_utils import check_tools
 from openhands.memory.condenser import Condenser
 from openhands.memory.condenser.condenser import Condensation, View
