@@ -233,6 +233,14 @@ def prepare_dataset(
         with open(output_file, 'r') as f:
             for line in f:
                 data = json.loads(line)
+                # #TODO: only skip if git_patch is non-empty
+                # git_patch = (
+                #     data.get('test_result', {}).get('git_patch')
+                #     if isinstance(data, dict) else None
+                # )
+                # # Skip marking as finished if git_patch is empty
+                # if git_patch == "":
+                #     continue
                 finished_ids.add(str(data[id_column]))
         logger.warning(
             f'\nOutput file {output_file} already exists. Loaded {len(finished_ids)} finished instances.'

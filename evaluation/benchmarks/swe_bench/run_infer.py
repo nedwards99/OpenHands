@@ -44,6 +44,7 @@ from openhands.controller.state.state import State
 from openhands.core.config import (
     AgentConfig,
     OpenHandsConfig,
+    ExtendedConfig,
     get_agent_config_arg,
     get_evaluation_parser,
     get_llm_config_arg,
@@ -261,6 +262,14 @@ def get_config(
         model_routing=model_routing_config,
     )
     config.set_agent_config(agent_config)
+    config.save_trajectory_path = os.path.abspath("./trajectories")
+    config.extended = ExtendedConfig.from_dict(
+    {
+        "dataset": metadata.dataset,
+        "mode": metadata.details.get("mode", "eval"),
+        "instance_id": instance["instance_id"],
+    }
+)
 
     return config
 

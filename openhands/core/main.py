@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 from typing import Callable, Protocol
+import re
+from datetime import datetime as dt
 
 import openhands.agenthub  # noqa F401 (we import this to get the agents registered)
 import openhands.cli.suppress_warnings  # noqa: F401
@@ -231,15 +233,67 @@ async def run_controller(
 
     # save trajectories if applicable
     if config.save_trajectory_path is not None:
-        # if save_trajectory_path is a folder, use session id as file name
-        if os.path.isdir(config.save_trajectory_path):
-            file_path = os.path.join(config.save_trajectory_path, sid + '.json')
-        else:
-            file_path = config.save_trajectory_path
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
-        with open(file_path, 'w') as f:  # noqa: ASYNC101
-            json.dump(histories, f, indent=4)
+        try:
+            agent_name = (
+                getattr(agent, "name", None)
+                or getattr(config, "default_agent", None)
+                or "agent"
+            )
+            llm_model = config.get_llm_config().model or "llm"
+            llm_name = re.sub(r'[^a-zA-Z0-9_-]', '', llm_model.split("/")[-1])
+            timestamp = dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
+            base_path = os.path.expanduser(config.save_trajectory_path)
+            treat_as_directory = os.path.isdir(base_path) or not os.path.splitext(base_path)[1]
+
+            def _slug_or_default(value: str | None, fallback: str) -> str:
+                if not value:
+                    return fallback
+                slug = re.sub(r'[^a-zA-Z0-9_-]+', '-', value).strip('-')
+                return slug or fallback
+
+            extended_meta: dict[str, str] = {}
+            try:
+                extended_meta = dict(config.extended.model_dump())
+            except AttributeError:
+                extended_meta = {}
+
+            dataset_segment = _slug_or_default(
+                extended_meta.get('dataset'), 'dataset-unknown'
+            )
+            mode_segment = _slug_or_default(
+                extended_meta.get('mode'), 'mode-unknown'
+            )
+            instance_segment = _slug_or_default(
+                extended_meta.get('instance_id'), event_stream.sid
+            )
+            agent_segment = _slug_or_default(agent_name, 'agent')
+            llm_segment = _slug_or_default(llm_name, 'llm')
+
+            if treat_as_directory:
+                dirpath = os.path.join(
+                    base_path,
+                    dataset_segment,
+                    mode_segment,
+                    agent_segment,
+                    llm_segment,
+                )
+                os.makedirs(dirpath, exist_ok=True)
+                file_path = os.path.join(
+                    dirpath, f"{instance_segment}_{timestamp}.json"
+                )
+            else:
+                dirpath = os.path.dirname(base_path) or "."
+                os.makedirs(dirpath, exist_ok=True)
+                file_path = base_path
+
+            histories = controller.get_trajectory(config.save_screenshots_in_trajectory)
+            with open(file_path, 'w', encoding='utf-8') as f:  # noqa: ASYNC101
+                json.dump(histories, f, indent=4)
+
+            logger.info(f"Saved trajectory to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save trajectory: {e}")
 
     return state
 
