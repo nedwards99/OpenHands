@@ -222,13 +222,23 @@ RUN \
     {% endif %}
     # Set environment variables (requires root)
     /openhands/micromamba/bin/micromamba run -n openhands poetry run python -c "import sys; print('OH_INTERPRETER_PATH=' + sys.executable)" >> /etc/environment && \
-    # Set permissions for shared read-only access
-    chmod -R 755 /openhands/poetry && \
-    chmod -R 755 /openhands/micromamba && \
-    chown -R openhands:openhands /openhands/poetry && \
+    # -------------------------------------------------------
+    # OPTIMIZATION: Removed recursive chown/chmod
+    # These folders are already owned by openhands from the previous step.
+    # Running chown -R here causes a massive Copy-on-Write hang on VMs.
+    # -------------------------------------------------------
     mkdir -p /openhands/workspace && chmod -R g+rws,o+rw /openhands/workspace && \
     chown -R openhands:openhands /openhands/workspace && \
-    chown -R openhands:openhands /openhands/micromamba && \
+    # Ensure PATH includes system binaries early in startup
+    # # Set environment variables (requires root)
+    # /openhands/micromamba/bin/micromamba run -n openhands poetry run python -c "import sys; print('OH_INTERPRETER_PATH=' + sys.executable)" >> /etc/environment && \
+    # # Set permissions for shared read-only access
+    # chmod -R 755 /openhands/poetry && \
+    # chmod -R 755 /openhands/micromamba && \
+    # chown -R openhands:openhands /openhands/poetry && \
+    # mkdir -p /openhands/workspace && chmod -R g+rws,o+rw /openhands/workspace && \
+    # chown -R openhands:openhands /openhands/workspace && \
+    # chown -R openhands:openhands /openhands/micromamba && \
     # Ensure PATH includes system binaries early in startup
     echo 'export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"' >> /etc/environment && \
     echo 'export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"' >> /etc/bash.bashrc && \
@@ -327,7 +337,10 @@ RUN \
     mkdir -p $(dirname ${OPENVSCODE_SERVER_ROOT}) && \
     # Ensure ownership is correct for all OpenHands paths
     chown -R openhands:openhands /home/openhands || true && \
-    chown -R openhands:openhands /openhands || true
+    # OPTIMIZATION: Do NOT recursively chown /openhands, it freezes the build.
+    # We handled the subfolders (poetry, micromamba) in previous steps.
+    chown openhands:openhands /openhands || true
+    #chown -R openhands:openhands /openhands || true
 
 {{ setup_vscode_server() }}
 
@@ -339,8 +352,8 @@ COPY --chown=openhands:openhands ./code/pyproject.toml ./code/poetry.lock /openh
 RUN if [ -d /openhands/code/microagents ]; then rm -rf /openhands/code/microagents; fi
 COPY --chown=openhands:openhands ./code/microagents /openhands/code/microagents
 COPY --chown=openhands:openhands ./code/openhands /openhands/code/openhands
-RUN chmod a+rwx /openhands/code/openhands/__init__.py && \
-    chown -R openhands:openhands /openhands/code
+RUN chmod a+rwx /openhands/code/openhands/__init__.py 
+    #&& \ chown -R openhands:openhands /openhands/code
 
 
 # ================================================================
