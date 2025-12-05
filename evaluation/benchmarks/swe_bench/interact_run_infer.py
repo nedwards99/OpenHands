@@ -351,6 +351,8 @@ if __name__ == '__main__':
         output_file,
         args.eval_num_workers,
         process_instance,
-        timeout_seconds=120 * 60,
+        timeout_seconds=8
+            * 60
+            * 60,
         max_retries=5,
     )
