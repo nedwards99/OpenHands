@@ -666,6 +666,36 @@ class DockerRuntime(ActionExecutionClient):
         if self.config.sandbox.base_container_image:
             self._cleanup_base_image_and_dependencies()
 
+        self._prune_images_and_build_cache()
+
+    def _prune_images_and_build_cache(self) -> None:
+        """Prune dangling images and build cache when safe."""
+        try:
+            import multiprocessing
+            # Only let the main process do aggressive pruning to avoid races
+            if multiprocessing.current_process().name != 'MainProcess':
+                return
+            client = self._init_docker_client()
+            try:
+                # Only prune when there are no other OpenHands runtime containers running
+                active_containers = [
+                    c for c in client.containers.list()
+                    if c.name and c.name.startswith(CONTAINER_NAME_PREFIX)
+                ]
+                if active_containers:
+                    return
+                # Prune dangling images and build cache
+                client.images.prune({'dangling': True})
+                try:
+                    client.api.prune_builds(filters={'until': '24h'})
+                except Exception:
+                    # buildx prune fallback (older docker API)
+                    pass
+            finally:
+                client.close()
+        except Exception as e:
+            logger.debug(f'Error during image/cache prune: {e}')
+
     def _release_port_locks(self) -> None:
         """Release all acquired port locks."""
         if self._host_port_lock:
