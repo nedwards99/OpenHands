@@ -8,7 +8,9 @@ if [ "$SET" != "full" ] && [ "$SET" != "lite" ] && [ "$SET" != "verified" ]; the
     exit 1
 fi
 
-input_file=evaluation/benchmarks/swe_bench/scripts/docker/all-swebench-${SET}-instance-images.txt
+#input_file=evaluation/benchmarks/swe_bench/scripts/docker/all-swebench-${SET}-instance-images.txt
+input_file=evaluation/benchmarks/swe_bench/scripts/docker/filtered_verified_images_100.txt
+#input_file=evaluation/benchmarks/swe_bench/scripts/docker/other_ids_not_in_best100_images_with_patch.txt
 echo "Downloading images based on ${input_file}"
 # Check if the file exists
 if [ ! -f "$input_file" ]; then

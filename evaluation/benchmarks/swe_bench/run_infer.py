@@ -732,6 +732,14 @@ def filter_dataset(dataset: pd.DataFrame, filter_column: str) -> pd.DataFrame:
                 subset = dataset[dataset[filter_column].isin(selected_ids)]
                 logger.info(f'Retained {subset.shape[0]} tasks after filtering')
                 return subset
+            # if 'selected_ids' in data:
+            #     skip_ids = data['selected_ids']
+            #     if isinstance(skip_ids, str):
+            #         skip_ids = [skip_ids]
+            #     logger.info(f'Skipping {len(skip_ids)} tasks from "selected_ids"...')
+            #     subset = dataset[~dataset[filter_column].isin(skip_ids)]
+            #     logger.info(f'Retained {subset.shape[0]} tasks after skipping IDs')
+            #     return subset
             if 'selected_repos' in data:
                 # repos for the swe-bench instances:
                 # ['astropy/astropy', 'django/django', 'matplotlib/matplotlib', 'mwaskom/seaborn', 'pallets/flask', 'psf/requests', 'pydata/xarray', 'pylint-dev/pylint', 'pytest-dev/pytest', 'scikit-learn/scikit-learn', 'sphinx-doc/sphinx', 'sympy/sympy']
@@ -739,11 +747,9 @@ def filter_dataset(dataset: pd.DataFrame, filter_column: str) -> pd.DataFrame:
                 if isinstance(selected_repos, str):
                     selected_repos = [selected_repos]
                 assert isinstance(selected_repos, list)
-                logger.info(
-                    f'Filtering {selected_repos} tasks from "selected_repos"...'
-                )
-                subset = dataset[dataset['repo'].isin(selected_repos)]
-                logger.info(f'Retained {subset.shape[0]} tasks after filtering')
+                logger.info(f'Skipping tasks from repos in \"selected_repos\": {selected_repos}')
+                subset = dataset[~dataset['repo'].isin(selected_repos)]
+                logger.info(f'Retained {subset.shape[0]} tasks after skipping repos')
                 return subset
 
     skip_ids = os.environ.get('SKIP_IDS', '').split(',')
