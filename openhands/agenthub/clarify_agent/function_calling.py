@@ -263,9 +263,9 @@ def response_to_actions(
 
                 # Preamble
                 if preamble:
-                    lines.append(f"❓ {preamble}\n")
+                    lines.append(f"{preamble}\n")
                 else:
-                    lines.append("❓ I need some clarification before proceeding:\n")
+                    lines.append("I need some clarification before proceeding:\n")
 
                 # Checklist (if provided) - use table format
                 # if checklist:
@@ -315,8 +315,7 @@ def response_to_actions(
                         default = q.get('default', '')
 
                         # Question number and text
-                        req_marker = "🔴"
-                        lines.append(f"{req_marker} **{i}. {text}**")
+                        lines.append(f"Q{i}. {text}")
 
                         # Options (if provided)
                         # if options:
@@ -333,8 +332,8 @@ def response_to_actions(
 
                 # Footer instructions
                 if questions:
-                    lines.append("---")
-                    lines.append("💡 *Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
+                    lines.append("")
+                    lines.append("*Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
 
                 content = "\n".join(lines)
                 action = MessageAction(content=content, wait_for_response=True)
