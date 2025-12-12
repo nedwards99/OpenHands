@@ -1,6 +1,10 @@
 run_openhands_cli.sh
 run_openhands_cli_phase2.sh
 
+evaluation/benchmarks/swe_bench/scripts/docker/filter_images_by_ids.py
+evaluation/benchmarks/swe_bench/scripts/docker/filtered_verified_images_100.txt
+evaluation/benchmarks/swe_bench/scripts/docker/other_ids_not_in_best100_images_with_patch.txt
+
 trajectories/
 
 # Byte-compiled / optimized / DLL files
