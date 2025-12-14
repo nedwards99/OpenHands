@@ -10,7 +10,6 @@ Key differences vs. AgentController:
   when the parent controller closes.
 """
 
-import asyncio
 import inspect
 from typing import Any
 
@@ -20,7 +19,7 @@ from openhands.controller.state.state import State
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.schema import AgentState
 from openhands.events import EventSource
-from openhands.events.action import AgentDelegateAction, MessageAction
+from openhands.events.action import AgentDelegateAction
 from openhands.events.observation import AgentDelegateObservation
 
 
@@ -162,4 +161,3 @@ class AgentControllerV2(base.AgentController):
         for delegate in self._delegate_pool.values():
             if not getattr(delegate, '_closed', False):
                 await delegate.close(set_stop_state=set_stop_state)
-

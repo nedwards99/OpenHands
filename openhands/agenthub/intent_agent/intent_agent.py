@@ -71,6 +71,9 @@ class IntentAgent(Agent):
         - config (AgentConfig): The configuration for this agent
         """
         super().__init__(config, llm_registry)
+        # Hardcode plan mode off and the short system prompt for IntentAgent
+        self.config.enable_plan_mode = False
+        self.config.system_prompt_filename = 'system_prompt.j2'
         self.pending_actions: deque['Action'] = deque()
         self.reset()
         self.tools = self._get_tools()

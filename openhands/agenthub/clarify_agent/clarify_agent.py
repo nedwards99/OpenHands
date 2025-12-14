@@ -98,6 +98,7 @@ class ClarifyAgent(Agent):
         self._awaiting_clarify_response = False
         self._clarify_request_user_id = None
         self._pending_post_clarify_turn = False
+        self._skip_delegate_once = False
         extended_cfg = {}
         try:
             extended_cfg = self.config.extended.model_dump()
@@ -211,28 +212,30 @@ class ClarifyAgent(Agent):
         """
         latest_user_message = state.get_last_user_message()
 
+        # If we asked the user via ClarifyTool and are waiting
         if self._awaiting_clarify_response:
             latest_id = latest_user_message.id if latest_user_message else None
             if latest_id is None or latest_id == self._clarify_request_user_id:
                 return AgentThinkAction('Waiting for user clarification.')
-            # user replied → give the main agent one turn
+            # user replied → give the main agent one turn before re-delegating
             self._awaiting_clarify_response = False
             self._clarify_request_user_id = None
-            self._pending_post_clarify_turn = True
+            self._intent_verdict = None
+            self._skip_delegate_once = True
 
-        if self._pending_post_clarify_turn:
-            # skip delegate logic exactly once so the main agent can act
-            self._pending_post_clarify_turn = False
-            # keep draining pending actions / run the normal branch
+            #self._pending_post_clarify_turn = True
 
-        # Continue with pending actions if any
+        # if self._pending_post_clarify_turn:
+        #     # skip delegate logic exactly once so the main agent can act
+        #     self._pending_post_clarify_turn = False
+        #     # keep draining pending actions / run the normal branch
+
         if self.pending_actions:
-            #logger.warning(f"Pending actions: {self.pending_actions}")
             if self._awaiting_intent and not self._intent_verdict:
-                return self.pending_actions.popleft()  # still waiting, keep draining
+                # Continue with pending actions if any
+                return self.pending_actions.popleft()
             if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
                 self._prune_pending_actions_for_clarify()
-                # fall through to enqueue clarify action below
             else:
                 return self.pending_actions.popleft()
 
@@ -252,9 +255,9 @@ class ClarifyAgent(Agent):
             case Condensation(action=condensation_action):
                 return condensation_action
 
-        logger.debug(
-            f'Processing {len(condensed_history)} events from a total of {len(state.history)} events'
-        )
+        # logger.debug(
+        #     f'Processing {len(condensed_history)} events from a total of {len(state.history)} events'
+        # )
 
         try:
             initial_user_message = self._get_initial_user_message(state.history)
@@ -263,10 +266,12 @@ class ClarifyAgent(Agent):
             if initial_user_message is None:
                 raise
 
-        # Delegate to IntentAgent for ambiguity.
-        # Skip delegation on the very first turn so the main agent can process the initial instructions.
+        # Delegate to IntentAgent
+        # Skip delegation on the very first turn so the main agent can process the initial instructions
         if not self._intent_delegate_initialized:
             self._intent_delegate_initialized = True
+        elif self._skip_delegate_once:
+            self._skip_delegate_once = False
         elif not self._awaiting_intent:
             self._intent_verdict = None
             # Ask IntentAgent for a verdict
@@ -277,7 +282,6 @@ class ClarifyAgent(Agent):
             #     else '(no new user message)'
             # )
             self._awaiting_intent = True
-            #logger.warning(f'{self._intent_delegate_agent}, {type(self._intent_delegate_agent)}')
             return AgentDelegateAction(
                     agent=self._intent_delegate_agent,
                     #agent='IntentAgent',
@@ -288,7 +292,6 @@ class ClarifyAgent(Agent):
                 )
 
         else:
-
             self._intent_verdict = self._read_intent_verdict(state.history)
             if self._intent_verdict is None:
                 logger.warning('Waiting for IntentAgent verdict…')
@@ -298,6 +301,7 @@ class ClarifyAgent(Agent):
         logger.warning(f"Intent verdict: {self._intent_verdict}")
 
         if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+            # Call ClarifyTool
             self._awaiting_clarify_response = True
             self._clarify_request_user_id = (
                 latest_user_message.id if latest_user_message else None
@@ -317,7 +321,7 @@ class ClarifyAgent(Agent):
             params: dict = {
                 'messages': self.llm.format_messages_for_llm(messages),
             }
-            # Restrict tools to Clarify for this turn.
+            # Restrict tools to Clarify for this turn
             params['tools'] = check_tools([ClarifyTool], self.llm.config)
             params['tool_choice'] = {'type': 'function', 'function': {'name': ClarifyTool['function']['name']}}
             params['extra_body'] = {
@@ -329,6 +333,7 @@ class ClarifyAgent(Agent):
             logger.debug(f'Response from LLM: {response}')
 
         else:
+            # Normal tool options
             if self._intent_verdict is None:
                 logger.warning('IntentAgent returned no verdict; continuing normally.')
 
@@ -361,60 +366,60 @@ class ClarifyAgent(Agent):
             # else drop FileReadAction, FileEditAction, AgentFinishAction, etc.
         self.pending_actions = kept
 
-    def _has_real_user_message(self, history: list[Event]) -> bool:
-        example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
-        for event in history:
-            if isinstance(event, MessageAction) and event.source == 'user':
-                text = event.content.strip()
-                if text and (not example or not text.startswith(example)):
-                    return True
-        return False
+    # def _has_real_user_message(self, history: list[Event]) -> bool:
+    #     example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
+    #     for event in history:
+    #         if isinstance(event, MessageAction) and event.source == 'user':
+    #             text = event.content.strip()
+    #             if text and (not example or not text.startswith(example)):
+    #                 return True
+    #     return False
 
-    def _find_first_real_user_message(self, history: list[Event]) -> MessageAction | None:
-        example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
-        for event in history:
-            if isinstance(event, MessageAction) and event.source == 'user':
-                text = event.content.strip()
-                if example and text.startswith(example):
-                    continue
-                if text:
-                    return event
-        return None
+    # def _find_first_real_user_message(self, history: list[Event]) -> MessageAction | None:
+    #     example = self.prompt_manager.get_in_context_example(tools=self.tools) or ''
+    #     for event in history:
+    #         if isinstance(event, MessageAction) and event.source == 'user':
+    #             text = event.content.strip()
+    #             if example and text.startswith(example):
+    #                 continue
+    #             if text:
+    #                 return event
+    #     return None
 
-    def _build_intent_context(self, state: State) -> str:
-        initial = self._find_first_real_user_message(state.history).content.strip()
-        if initial is None:
-            initial = '(no user message found)'
-        try:
-            latest = state.get_last_user_message().content.strip()
-        except AttributeError:
-            latest = '(no user message found)'
-        summary = '\n'.join(
-            ev.content.strip()
-            for ev in state.history
-            if isinstance(ev, (MessageAction, Observation))
-        ) or '(no recent events)'
+    # def _build_intent_context(self, state: State) -> str:
+    #     initial = self._find_first_real_user_message(state.history).content.strip()
+    #     if initial is None:
+    #         initial = '(no user message found)'
+    #     try:
+    #         latest = state.get_last_user_message().content.strip()
+    #     except AttributeError:
+    #         latest = '(no user message found)'
+    #     summary = '\n'.join(
+    #         ev.content.strip()
+    #         for ev in state.history
+    #         if isinstance(ev, (MessageAction, Observation))
+    #     ) or '(no recent events)'
 
-        if initial == latest:
-            return(
-                f"User message:\n{initial or '(none)'}\n\n"
-                f"Recent context:\n{summary}"
-            )
-        else:
-            return (
-                f"Initial user message:\n{initial or '(none)'}\n\n"
-                f"Latest user message:\n{latest or '(none)'}\n\n"
-                f"Recent context:\n{summary}"
-            )
+    #     if initial == latest:
+    #         return(
+    #             f"User message:\n{initial or '(none)'}\n\n"
+    #             f"Recent context:\n{summary}"
+    #         )
+    #     else:
+    #         return (
+    #             f"Initial user message:\n{initial or '(none)'}\n\n"
+    #             f"Latest user message:\n{latest or '(none)'}\n\n"
+    #             f"Recent context:\n{summary}"
+    #         )
 
-    def _summarize_event_for_intent(self, event: Event) -> str:
-        if isinstance(event, MessageAction):
-            return self._summarize_agent_event(event) or 'Agent message.'
-        if isinstance(event, Action):
-            return self._summarize_agent_event(event) or event.__class__.__name__
-        if isinstance(event, Observation):
-            return self._summarize_environment_observation(event) or event.__class__.__name__
-        return event.__class__.__name__
+    # def _summarize_event_for_intent(self, event: Event) -> str:
+    #     if isinstance(event, MessageAction):
+    #         return self._summarize_agent_event(event) or 'Agent message.'
+    #     if isinstance(event, Action):
+    #         return self._summarize_agent_event(event) or event.__class__.__name__
+    #     if isinstance(event, Observation):
+    #         return self._summarize_environment_observation(event) or event.__class__.__name__
+    #     return event.__class__.__name__
 
     def _get_initial_user_message(self, history: list[Event]) -> MessageAction:
         """Finds the initial user message action from the full history."""

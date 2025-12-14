@@ -325,15 +325,15 @@ def response_to_actions(
                         #         lines.append(f"   {chr(96+j)}) {opt}{default_marker}")
 
                         # Default (if no options provided)
-                        if default:
-                            lines.append(f"   *Suggested: {default}*")
+                        # if default:
+                        #     lines.append(f"   *Suggested: {default}*")
 
                         lines.append("")  # Blank line between questions
 
                 # Footer instructions
-                if questions:
-                    lines.append("")
-                    lines.append("*Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
+                # if questions:
+                #     lines.append("")
+                #     lines.append("*Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
 
                 content = "\n".join(lines)
                 action = MessageAction(content=content, wait_for_response=True)
