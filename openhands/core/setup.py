@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 import openhands.agenthub  # noqa F401 (we import this to get the agents registered)
 from openhands.controller import AgentController
+from openhands.controller import AgentControllerV2
 from openhands.controller.agent import Agent
 from openhands.controller.state.state import State
 from openhands.core.config import (
@@ -233,6 +234,7 @@ def create_controller(
     # Build map of per-agent configs so delegates use their dedicated settings
     agent_configs_map: dict[str, AgentConfig] = {}
     for name, agent_cfg in config.get_agent_configs().items():
+        logger.info(f"[DEBUG] agent config loaded: {name} -> plan_mode={agent_cfg.enable_plan_mode}, prompt={agent_cfg.system_prompt_filename}, llm={agent_cfg.llm_config}")
         try:
             cloned_cfg = agent_cfg.model_copy(deep=True)
         except AttributeError:
@@ -240,7 +242,7 @@ def create_controller(
         cloned_cfg.runtime = config.runtime
         agent_configs_map[name] = cloned_cfg
 
-    controller = AgentController(
+    controller = AgentControllerV2( #AgentController(
         agent=agent,
         conversation_stats=conversation_stats,
         iteration_delta=config.max_iterations,

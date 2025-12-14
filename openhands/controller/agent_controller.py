@@ -442,16 +442,16 @@ class AgentController:
         if self.delegate is not None:
             delegate_state = self.delegate.get_agent_state()
             if (
-                delegate_state
-                not in (
-                    AgentState.FINISHED,
-                    AgentState.ERROR,
-                    AgentState.REJECTED,
-                )
-                or 'RuntimeError: Agent reached maximum iteration.'
-                in self.delegate.state.last_error
-                or 'RuntimeError:Agent reached maximum budget for conversation'
-                in self.delegate.state.last_error
+                isinstance(event, MessageAction)
+                and event.source == EventSource.USER
+                and self.state.agent_state == AgentState.AWAITING_USER_INPUT
+            ):
+                self.end_delegate()
+            # fall through to parent handling of this user message
+            elif delegate_state not in (
+                AgentState.FINISHED,
+                AgentState.ERROR,
+                AgentState.REJECTED,
             ):
                 # Forward the event to delegate and skip parent processing
                 asyncio.get_event_loop().run_until_complete(
@@ -461,7 +461,8 @@ class AgentController:
             else:
                 # delegate is done or errored, so end it
                 self.end_delegate()
-                return
+                # return
+                # fall through and let the parent handle this event
 
         # continue parent processing only if there's no active delegate
         asyncio.get_event_loop().run_until_complete(self._on_event(event))
