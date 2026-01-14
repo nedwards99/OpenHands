@@ -469,7 +469,8 @@ class AgentController:
 
     async def _on_event(self, event: Event) -> None:
         if hasattr(event, 'hidden') and event.hidden:
-            return
+            if not (isinstance(event, MessageAction) and event.source == EventSource.USER):
+                return
 
         self.state_tracker.add_history(event)
 
@@ -506,6 +507,9 @@ class AgentController:
             message_for_delegate: MessageAction | None = None
             if 'prompt' in action.inputs and action.inputs['prompt']:
                 message_for_delegate = MessageAction(content=action.inputs['prompt'])
+                # Hide the delegate message if IntentAgent
+                if action.agent == 'IntentAgent':
+                    message_for_delegate.hidden = True
             elif 'task' in action.inputs and action.inputs['task']:
                 message_for_delegate = MessageAction(
                     content='TASK: ' + action.inputs['task']
@@ -572,6 +576,10 @@ class AgentController:
             action (MessageAction): The message action to handle.
         """
         if action.source == EventSource.USER:
+            if getattr(action, 'hidden', False):
+                if self.get_agent_state() != AgentState.RUNNING:
+                    await self.set_agent_state_to(AgentState.RUNNING)
+                return
             # Use info level if LOG_ALL_EVENTS is set
             log_level = (
                 'info' if os.getenv('LOG_ALL_EVENTS') in ('true', '1') else 'debug'

@@ -32,10 +32,13 @@ from openhands.agenthub.clarify_agent.tools.think import ThinkTool
 from openhands.controller.agent import Agent
 from openhands.controller.state.state import State
 from openhands.core.config import AgentConfig
+from openhands.core.schema.agent import AgentState
 from openhands.core.logger import openhands_logger as logger
 from openhands.core.message import Message, TextContent
 
 from openhands.events.action import AgentFinishAction, MessageAction, Action, AgentDelegateAction, AgentThinkAction
+from openhands.events.action.agent import ChangeAgentStateAction
+from openhands.events.action.empty import NullAction
 from openhands.events.event import Event, EventSource
 from openhands.events.observation.observation import Observation
 from openhands.events.observation.delegate import AgentDelegateObservation
@@ -51,8 +54,6 @@ from openhands.runtime.plugins import (
 from openhands.utils.prompt import PromptManager
 
 REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete."
-# Modified version for IntentLiteAgent
-#REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return \"Verdict: Ambiguous\". Only skip asking questions when you are absolutely sure all relevant information is complete."
 SAFE_TYPES = (MessageAction, AgentThinkAction)
 
 class ClarifyAgent(Agent):
@@ -216,7 +217,12 @@ class ClarifyAgent(Agent):
         if self._awaiting_clarify_response:
             latest_id = latest_user_message.id if latest_user_message else None
             if latest_id is None or latest_id == self._clarify_request_user_id:
-                return AgentThinkAction('Waiting for user clarification.')
+                if state.agent_state != AgentState.AWAITING_USER_INPUT:
+                    return ChangeAgentStateAction(
+                        agent_state=AgentState.AWAITING_USER_INPUT,
+                        thought='Waiting for user clarification.',
+                    )
+                return NullAction()
             # user replied → give the main agent one turn before re-delegating
             self._awaiting_clarify_response = False
             self._clarify_request_user_id = None
@@ -287,7 +293,7 @@ class ClarifyAgent(Agent):
                     #agent='IntentAgent',
                     # Pass latest user context and mark delegate as persistent
                     inputs={
-                        'prompt': f'{REMINDER_MESSAGE}',
+                        'prompt': REMINDER_MESSAGE,
                     },
                 )
 
@@ -300,23 +306,21 @@ class ClarifyAgent(Agent):
 
         logger.warning(f"Intent verdict: {self._intent_verdict}")
 
-        if self._intent_verdict and self._intent_verdict.get('needs_clarification'):
+        if self._intent_requires_clarification():
             # Call ClarifyTool
-            self._awaiting_clarify_response = True
-            self._clarify_request_user_id = (
-                latest_user_message.id if latest_user_message else None
-            )
             logger.warning("IntentAgent requested clarification; invoking ClarifyTool.")
             reason = self._intent_verdict.get('reasons', 'No reasons provided.')
             if reason:
                 reminder = (
-                    "Intent agent flagged open ambiguities in the current context; call the clarify tool next.\n"
+                    "Before proceeding further, ask a clarifying question.\n"
                     f"Reason: {reason.strip()}"
                 )
             else:
-                reminder = "Intent agent flagged open ambiguities in the current context; call the clarify tool next."
+                reminder = "Before proceeding further, ask a clarifying question."
             messages = self._get_messages(condensed_history, initial_user_message)
-            messages.append(Message(role='system', content=[TextContent(text=reminder)]))
+            messages.append(
+                Message(role='system', content=[TextContent(text=reminder)])
+            )
 
             params: dict = {
                 'messages': self.llm.format_messages_for_llm(messages),
@@ -331,6 +335,10 @@ class ClarifyAgent(Agent):
             }
             response = self.llm.completion(**params)
             logger.debug(f'Response from LLM: {response}')
+            self._awaiting_clarify_response = True
+            self._clarify_request_user_id = (
+                latest_user_message.id if latest_user_message else None
+            )
 
         else:
             # Normal tool options
@@ -499,6 +507,21 @@ class ClarifyAgent(Agent):
         #         break
 
         return messages
+
+    def _intent_requires_clarification(self) -> bool:
+        """Return True if the intent verdict flagged missing info."""
+        if not self._intent_verdict:
+            return False
+        value = self._intent_verdict.get('needs_clarification')
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == 'true':
+                return True
+            if normalized == 'false':
+                return False
+        elif value:
+            return True
+        return False
 
     def _read_intent_verdict(self, history: list[Event]) -> dict[str, Any] | None:
         """Scan the newest events for the delegate's result and return it as a dict."""

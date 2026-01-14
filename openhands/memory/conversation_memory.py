@@ -233,6 +233,11 @@ class ConversationMemory:
                 TaskTrackingAction,
             ),
         ) or (isinstance(action, CmdRunAction) and action.source == 'agent'):
+            if isinstance(action, AgentDelegateAction) and getattr(
+                action, 'agent', ''
+            ) == 'IntentAgent':
+                # Suppress IntentAgent delegation messages in LLM history
+                return []
             tool_metadata = action.tool_call_metadata
 
             # Allow user actions to skip tool metadata validation
@@ -516,6 +521,10 @@ class ConversationMemory:
 
             message = Message(role='user', content=content)
         elif isinstance(obs, AgentDelegateObservation):
+            outputs = getattr(obs, 'outputs', {}) or {}
+            if 'needs_clarification' in outputs or 'requires_clarification' in outputs:
+                # Suppress IntentAgent delegate observations from LLM history
+                return []
             text = truncate_content(
                 obs.outputs.get('content', obs.content),
                 max_message_chars,

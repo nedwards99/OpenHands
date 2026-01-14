@@ -12,6 +12,7 @@ class MessageAction(Action):
     file_urls: list[str] | None = None
     image_urls: list[str] | None = None
     wait_for_response: bool = False
+    hidden: bool = False
     action: str = ActionType.MESSAGE
     security_risk: ActionSecurityRisk = ActionSecurityRisk.UNKNOWN
 
