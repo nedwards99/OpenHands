@@ -4,6 +4,7 @@ import os
 
 import pandas as pd
 from datasets import load_dataset
+from jinja2 import Environment, FileSystemLoader
 from litellm import completion as litellm_completion
 
 import openhands.agenthub
@@ -39,7 +40,7 @@ from openhands.utils.async_utils import call_async_from_sync
 
 USE_HINT_TEXT = os.environ.get('USE_HINT_TEXT', 'false').lower() == 'true'
 USE_INSTANCE_IMAGE = os.environ.get('USE_INSTANCE_IMAGE', 'false').lower() == 'true'
-RUN_WITH_BROWSING = os.environ.get('RUN_WITH_BROWSING', 'false').lower() == 'false'
+RUN_WITH_BROWSING = os.environ.get('RUN_WITH_BROWSING', 'false').lower() == 'true'
 
 
 class FakeUser:
@@ -96,22 +97,6 @@ def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
 
 def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageAction:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
-    # Prepare instruction
-    # if metadata.agent_class == 'CodeActSWEAgent':
-    #     instruction = (
-    #         'We are currently solving the following issue within our repository. Here is the issue text:\n'
-    #         '--- BEGIN ISSUE ---\n'
-    #         f'{instance.problem_statement}\n'
-    #         '--- END ISSUE ---\n\n'
-    #     )
-    #     if USE_HINT_TEXT and instance.hints_text:
-    #         instruction += (
-    #             f'--- BEGIN HINTS ---\n{instance.hints_text}\n--- END HINTS ---\n'
-    #         )
-    #     instruction += CODEACT_SWE_PROMPT.format(workspace_dir_name=workspace_dir_name)
-    # else:
-    # Instruction based on Anthropic's official trajectory
-    # https://github.com/eschluntz/swe-bench-experiments/tree/main/evaluation/verified/20241022_tools_claude-3-5-sonnet-updated/trajs
     instruction = (
         '<uploaded_files>\n'
         f'/workspace/{workspace_dir_name}\n'
@@ -134,6 +119,20 @@ def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageActio
         '5. Think about edge cases and make sure your fix handles them as well.\n'
         "Your thinking should be thorough and so it's fine if it's very long.\n"
     )
+    prompts_dir = os.path.join(os.path.dirname(__file__), 'prompts')
+    env = Environment(loader=FileSystemLoader(prompts_dir))
+    template = env.get_template('swe_default.j2')
+
+    # Render swe_default.j2 but use original_issue as the issue text.
+    instance_with_original_issue = instance.copy()
+    instance_with_original_issue['problem_statement'] = instance.original_issue
+    context = {
+        'instance': instance_with_original_issue,
+        'workspace_dir_name': workspace_dir_name,
+        'metadata': metadata,
+        'test_instructions': '',
+    }
+    instruction = template.render(context)
 
     if RUN_WITH_BROWSING:
         instruction += (

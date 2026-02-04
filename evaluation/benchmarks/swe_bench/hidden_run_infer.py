@@ -4,6 +4,7 @@ import os
 
 import pandas as pd
 from datasets import load_dataset
+from jinja2 import Environment, FileSystemLoader
 from litellm import completion as litellm_completion
 
 import openhands.agenthub
@@ -39,7 +40,7 @@ from openhands.utils.async_utils import call_async_from_sync
 
 USE_HINT_TEXT = os.environ.get('USE_HINT_TEXT', 'false').lower() == 'true'
 USE_INSTANCE_IMAGE = os.environ.get('USE_INSTANCE_IMAGE', 'false').lower() == 'true'
-RUN_WITH_BROWSING = os.environ.get('RUN_WITH_BROWSING', 'false').lower() == 'false'
+RUN_WITH_BROWSING = os.environ.get('RUN_WITH_BROWSING', 'false').lower() == 'true'
 
 
 class FakeUser:
@@ -96,41 +97,35 @@ def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
 
 def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageAction:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
-    # Prepare instruction
-    # if metadata.agent_class == 'CodeActSWEAgent':
-    #     instruction = (
-    #         'We are currently solving the following issue within our repository. Here is the issue text:\n'
-    #         '--- BEGIN ISSUE ---\n'
-    #         f'{instance.problem_statement}\n'
-    #         '--- END ISSUE ---\n\n'
-    #     )
-    #     if USE_HINT_TEXT and instance.hints_text:
-    #         instruction += (
-    #             f'--- BEGIN HINTS ---\n{instance.hints_text}\n--- END HINTS ---\n'
-    #         )
-    #     instruction += CODEACT_SWE_PROMPT.format(workspace_dir_name=workspace_dir_name)
-    # else:
-    # Instruction based on Anthropic's official trajectory
-    # https://github.com/eschluntz/swe-bench-experiments/tree/main/evaluation/verified/20241022_tools_claude-3-5-sonnet-updated/trajs
-    instruction = (
-        '<uploaded_files>\n'
-        f'/workspace/{workspace_dir_name}\n'
-        '</uploaded_files>\n'
-        f"I've uploaded a python code repository in the directory {workspace_dir_name}. Consider the following PR description:\n\n"
-        f'<pr_description>\n'
-        f'{instance.problem_statement}\n'
-        '</pr_description>\n\n'
-        'Can you help me implement the necessary changes to the repository so that the requirements specified in the <pr_description> are met?\n'
-        "I've already taken care of all changes to any of the test files described in the <pr_description>. This means you DON'T have to modify the testing logic or any of the tests in any way!\n"
-        'Your task is to make the minimal changes to non-test files in the /repo directory to ensure the <pr_description> is satisfied.\n'
-        'Follow these steps to resolve the issue:\n'
-        '1. As a first step, it might be a good idea to explore the repo to familiarize yourself with its structure.\n'
-        '2. Create a script to reproduce the error and execute it with `python <filename.py>` using the BashTool, to confirm the error.\n'
-        '3. Edit the source code of the repo to resolve the issue.\n'
-        '4. Rerun your reproduce script and confirm that the error is fixed!\n'
-        '5. Think about edge cases and make sure your fix handles them as well.\n'
-        "Your thinking should be thorough and so it's fine if it's very long.\n"
-    )
+    # instruction = (
+    #     '<uploaded_files>\n'
+    #     f'/workspace/{workspace_dir_name}\n'
+    #     '</uploaded_files>\n'
+    #     f"I've uploaded a python code repository in the directory {workspace_dir_name}. Consider the following PR description:\n\n"
+    #     f'<pr_description>\n'
+    #     f'{instance.problem_statement}\n'
+    #     '</pr_description>\n\n'
+    #     'Can you help me implement the necessary changes to the repository so that the requirements specified in the <pr_description> are met?\n'
+    #     "I've already taken care of all changes to any of the test files described in the <pr_description>. This means you DON'T have to modify the testing logic or any of the tests in any way!\n"
+    #     'Your task is to make the minimal changes to non-test files in the /repo directory to ensure the <pr_description> is satisfied.\n'
+    #     'Follow these steps to resolve the issue:\n'
+    #     '1. As a first step, it might be a good idea to explore the repo to familiarize yourself with its structure.\n'
+    #     '2. Create a script to reproduce the error and execute it with `python <filename.py>` using the BashTool, to confirm the error.\n'
+    #     '3. Edit the source code of the repo to resolve the issue.\n'
+    #     '4. Rerun your reproduce script and confirm that the error is fixed!\n'
+    #     '5. Think about edge cases and make sure your fix handles them as well.\n'
+    #     "Your thinking should be thorough and so it's fine if it's very long.\n"
+    # )
+    prompts_dir = os.path.join(os.path.dirname(__file__), 'prompts')
+    env = Environment(loader=FileSystemLoader(prompts_dir))
+    template = env.get_template('swe_default.j2')
+    context = {
+        'instance': instance,
+        'workspace_dir_name': workspace_dir_name,
+        'metadata': metadata,
+        'test_instructions': '',
+    }
+    instruction = template.render(context)
 
     if RUN_WITH_BROWSING:
         instruction += (
