@@ -6,6 +6,7 @@ load_dotenv()
 from openhands.agenthub import (  # noqa: E402
     browsing_agent,
     clarify_agent,
+    clarify_agent_v2,
     codeact_agent,
     codewrite_agent,
     dummy_agent,
@@ -21,6 +22,7 @@ __all__ = [
     'codeact_agent',
     'codewrite_agent',
     'clarify_agent',
+    'clarify_agent_v2',
     'intent_agent',
     'dummy_agent',
     'browsing_agent',

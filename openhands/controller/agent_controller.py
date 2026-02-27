@@ -469,7 +469,9 @@ class AgentController:
 
     async def _on_event(self, event: Event) -> None:
         if hasattr(event, 'hidden') and event.hidden:
-            if not (isinstance(event, MessageAction) and event.source == EventSource.USER):
+            if not (
+                isinstance(event, MessageAction) and event.source == EventSource.USER
+            ):
                 return
 
         self.state_tracker.add_history(event)

@@ -233,9 +233,10 @@ class ConversationMemory:
                 TaskTrackingAction,
             ),
         ) or (isinstance(action, CmdRunAction) and action.source == 'agent'):
-            if isinstance(action, AgentDelegateAction) and getattr(
-                action, 'agent', ''
-            ) == 'IntentAgent':
+            if (
+                isinstance(action, AgentDelegateAction)
+                and getattr(action, 'agent', '') == 'IntentAgent'
+            ):
                 # Suppress IntentAgent delegation messages in LLM history
                 return []
             tool_metadata = action.tool_call_metadata
