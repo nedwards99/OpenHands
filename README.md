@@ -27,7 +27,7 @@ We evaluate five experimental settings on the SWE-bench Verified dataset, using 
 | UA-Single | 61.20% |
 | **UA-Multi** | **69.40%** |
 
-UA-Multi closes the performance gap with agents operating on fully specified instructions, achieving a resolve rate closely matching Full (p = 0.458) and Interactive Baseline (p = 0.621), while significantly outperforming UA-Single (p < 0.001). All p-values are computed from non-parametric permutation tests.
+Our UA-Multi agent closes the performance gap with agents operating on fully specified instructions, achieving a resolve rate closely matching Full (p = 0.458) and Interactive Baseline (p = 0.621), while significantly outperforming our UA-Single agent (p < 0.001). All p-values are computed from non-parametric permutation tests.
 
 ## ⚙️ Setup
 
