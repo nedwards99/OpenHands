@@ -121,23 +121,8 @@ class IntentAgent(Agent):
             )
 
         tools = []
-        # if self.config.enable_cmd:
-        #     tools.append(
-        #         create_cmd_run_tool(use_short_description=use_short_tool_desc)
-        #     )
-        # if self.config.enable_think:
-        #     tools.append(ThinkTool)
-        # tools.append(ClarifyTool)
         if self.config.enable_finish:
             tools.append(ClarifyDecisionTool)
-            #tools.append(FinishTool)
-        # elif self.config.enable_editor:
-        #     tools.append(
-        #         create_str_replace_editor_tool(
-        #             use_short_description=use_short_tool_desc,
-        #             runtime_type=self.config.runtime,
-        #         )
-        #     )
         return tools
 
     def reset(self) -> None:
@@ -321,76 +306,3 @@ class IntentAgent(Agent):
             response,
             mcp_tool_names=list(self.mcp_tools.keys()),
         )
-
-class IntentLiteAgent(IntentAgent):
-    """Lightweight ambiguity checker that emits a plain verdict."""
-
-    def _get_tools(self) -> list['ChatCompletionToolParam']:
-        """Tools available for intent inspection."""
-        return []
-
-    def _parse_verdict(self, response: ModelResponse) -> IntentDecisionAction:
-        """
-        Extract reasoning + `Verdict: ...` line from a free-form response.
-        Falls back to treating the entire message as reasoning and flags
-        ambiguity if the verdict line is missing.
-        """
-        choice = response.choices[0]
-        content = (choice.message.content or '').strip()
-
-        match = re.search(r'Verdict:\s*(Ambiguous|Clear)', content, flags=re.IGNORECASE)
-        if match:
-            verdict = match.group(1).lower()
-            reasoning = content[: match.start()].strip()
-            needs = verdict == 'ambiguous'
-        else:
-            reasoning = content
-            needs = False
-
-        return IntentDecisionAction(
-            needs_clarification=needs,
-            reasons=reasoning,
-        )
-
-    def step(self, state: State) -> IntentDecisionAction:
-        condensed_history: list[Event] = []
-        match self.condenser.condensed_history(state):
-            case View(events=events):
-                condensed_history = events
-
-            case Condensation(action=condensation_action):
-                return condensation_action
-
-        logger.debug(
-            f'Processing {len(condensed_history)} events from a total of {len(state.history)} events'
-        )
-        initial_user = self._get_initial_user_message(state.history)
-        messages = self._get_messages(condensed_history, initial_user)
-
-        response = self.llm.completion(
-            messages=self.llm.format_messages_for_llm(messages)
-        )
-        return self._parse_verdict(response)
-
-    # def response_to_actions(
-    #     self,
-    #     response: ModelResponse,
-    #     mcp_tool_names: list[str] | None = None,
-    # ) -> list[Action]:
-    #     content = response.choices[0].message.content.strip()
-    #     logger.warning(f'IntentLiteAgent response content: {content}')
-    #     match = re.search(r'Verdict:\s*(Ambiguous|Clear)', content, flags=re.IGNORECASE)
-    #     if match:
-    #         verdict = match.group(1).lower()
-    #         reasoning = content[: match.start()].strip()
-    #         needs = verdict == 'ambiguous'
-    #     else:
-    #         reasoning = content
-    #         needs = False
-
-    #     return [
-    #         IntentDecisionAction(
-    #             needs_clarification=needs,
-    #             reasons=reasoning,
-    #         )
-    #     ]

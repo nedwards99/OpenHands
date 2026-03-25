@@ -109,10 +109,6 @@ def response_to_actions(
                     raise FunctionCallValidationError(
                         f'Missing required argument "command" in tool call {tool_call.function.name}'
                     )
-                # if any((s in arguments['command']) for s in ['python ', 'pip ', 'python3 ', 'pip3 ']):
-                #     raise FunctionCallValidationError(
-                #         f'Executing Python code or installing packages is not allowed.'
-                #     )
                 # convert is_input to boolean
                 is_input = arguments.get('is_input', 'false') == 'true'
                 action = CmdRunAction(command=arguments['command'], is_input=is_input)
@@ -256,7 +252,6 @@ def response_to_actions(
                 questions = arguments.get('questions', [])
                 preamble = arguments.get('message', '')
                 wait = arguments.get('wait_for_response', True)
-                # checklist = arguments.get('checklist', [])
 
                 # Build a nicely formatted message
                 lines = []
@@ -266,36 +261,6 @@ def response_to_actions(
                     lines.append(f"{preamble}\n")
                 else:
                     lines.append("I need some clarification before proceeding:\n")
-
-                # Checklist (if provided) - use table format
-                # if checklist:
-                #     lines.append("📋 **Current Requirements Status**")
-                #     lines.append("```")
-                #     # Calculate column widths
-                #     max_label = max(len(item.get('label', '')) for item in checklist)
-                #     max_status = max(len(item.get('status', '')) for item in checklist)
-                #     max_value = max(len(item.get('value', '')) for item in checklist)
-
-                #     # Header
-                #     lines.append(f"{'Requirement':<{max_label}} | {'Status':<{max_status}} | Value")
-                #     lines.append(f"{'-' * max_label}-+-{'-' * max_status}-+{'-' * 6}")
-
-                #     # Items
-                #     for item in checklist:
-                #         label = item.get('label', '')[:max_label]
-                #         status = item.get('status', 'UNKNOWN')
-                #         value = item.get('value', '')
-
-                #         # Add emoji indicators
-                #         status_emoji = {
-                #             'OK': '✅',
-                #             'UNKNOWN': '❓',
-                #             'MISSING': '❌',
-                #             'N/A': '⊘'
-                #         }.get(status, '?')
-
-                #         lines.append(f"{label:<{max_label}} | {status_emoji} {status:<{max_status-2}} | {value}")
-                #     lines.append("```\n")
 
                 # Questions - numbered list with clear formatting
                 if questions:
@@ -329,11 +294,6 @@ def response_to_actions(
                         #     lines.append(f"   *Suggested: {default}*")
 
                         lines.append("")  # Blank line between questions
-
-                # Footer instructions
-                # if questions:
-                #     lines.append("")
-                #     lines.append("*Respond with your answers (e.g., '1a, 2b, 3: custom value') or 'use defaults' to proceed with recommendations.*")
 
                 content = "\n".join(lines)
                 action = MessageAction(content=content, wait_for_response=True)

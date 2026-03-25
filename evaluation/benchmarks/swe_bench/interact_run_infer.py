@@ -118,41 +118,12 @@ AGENT_CLS_TO_FAKE_USER_RESPONSE_FN = {
     'CodeActAgent': get_fake_user_response,
 }
 
-
-# AGENT_CLS_TO_INST_SUFFIX = {
-#     'CodeActAgent': 'When you think you have fixed the issue through code changes, please run the following command: <execute_bash> exit </execute_bash>.\n',
-#     'CodeActSWEAgent': 'When you think you have fixed the issue through code changes, please run the following command: <execute_bash> exit </execute_bash>.\n',
-# }
-
-
 def _get_swebench_workspace_dir_name(instance: pd.Series) -> str:
     return f'{instance.repo}__{instance.version}'.replace('/', '__')
 
 
 def get_instruction(instance: pd.Series, metadata: EvalMetadata) -> MessageAction:
     workspace_dir_name = _get_swebench_workspace_dir_name(instance)
-    # instruction = (
-    #     '<uploaded_files>\n'
-    #     f'/workspace/{workspace_dir_name}\n'
-    #     '</uploaded_files>\n'
-    #     f"I've uploaded a python code repository in the directory {workspace_dir_name}. Consider the following PR description:\n\n"
-    #     f'<pr_description>\n'
-    #     f'{instance.problem_statement}\n'
-    #     '</pr_description>\n\n'
-    #     'Can you help me implement the necessary changes to the repository so that the requirements specified in the <pr_description> are met?\n'
-    #     "I've already taken care of all changes to any of the test files described in the <pr_description>. This means you DON'T have to modify the testing logic or any of the tests in any way!\n"
-    #     'Your task is to make the minimal changes to non-test files in the /repo directory to ensure the <pr_description> is satisfied.\n'
-    #     'I have not provided all the necessary details about the issue and I have some hidden details that are helpful. Please ask me specific questions using non-code commands to gather the relevant information that I have to help you solve the issue. Ensure you have all the details you require to solve the issue.\n'
-    #     'You have a limited number of turns. Do NOT interact with me more than three times so as to maximize the number of turns you have to work on the solution.\n'
-    #     'Follow these steps to resolve the issue:\n'
-    #     '1. As a first step, look at the issue and ask me questions to get all the necessary details about the issue. You can also ask me questions if you run into a problem in later steps.\n'
-    #     '2. Then, it might be a good idea to explore the repo to familiarize yourself with its structure.\n'
-    #     '3. Create a script to reproduce the error and execute it with `python <filename.py>` using the BashTool, to confirm the error.\n'
-    #     '4. Edit the source code of the repo to resolve the issue.\n'
-    #     '5. Rerun your reproduce script and confirm that the error is fixed!\n'
-    #     '6. Think about edge cases and make sure your fix handles them as well.\n'
-    #     "Your thinking should be thorough and so it's fine if it's very long.\n"
-    # )
     prompts_dir = os.path.join(os.path.dirname(__file__), 'prompts')
     env = Environment(loader=FileSystemLoader(prompts_dir))
     template = env.get_template('swe_default_interact.j2')
