@@ -1,8 +1,9 @@
 # Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents
 
-**Paper**: [Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents](https://arxiv.org/abs/PLACEHOLDER)
-
-This repository contains the code and evaluation setup for the paper above. We evaluate LLM coding agents on an underspecified variant of SWE-bench Verified introduced by [Vijayvargiya et al. (2026)](https://arxiv.org/abs/2502.13069), where agents must independently decide when to ask the user clarifying questions to resolve missing information. We use the [OpenHands](https://github.com/All-Hands-AI/OpenHands) agent framework as the execution environment.
+> [!NOTE]
+> **Paper**: [Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents](https://arxiv.org/abs/PLACEHOLDER)
+>
+> This repository contains the code and evaluation setup for the paper above. We develop and evaluate uncertainty-aware clarification-seeking agents on an underspecified variant of SWE-bench Verified ([Vijayvargiya et al., 2026](https://arxiv.org/abs/2502.13069)), where agents must independently decide when to ask the user clarifying questions to resolve missing information. We use the [OpenHands](https://github.com/All-Hands-AI/OpenHands) agent framework as the execution environment.
 
 ## 📋 Overview
 
