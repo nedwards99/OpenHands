@@ -43,7 +43,7 @@ The evaluation uses two LLM configurations: one for the coding agent and one for
 model = "anthropic/claude-sonnet-4-5-20250929"
 api_key = "<your-anthropic-api-key>"
 
-# Simulated user (GPT-5.1 was used in the paper)
+# Simulated user (GPT-5.1 in the paper)
 [llm.fake_user]
 model = "openai/gpt-5.1-2025-11-13"
 api_key = "<your-openai-api-key>"
