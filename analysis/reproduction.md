@@ -8,9 +8,8 @@ artifacts. All scripts are designed to be run from the `analysis/` directory.
 ## Background
 
 This analysis evaluates whether allowing a coding agent to ask clarifying
-questions about ambiguous SWE-bench task descriptions improves its ability to
-resolve issues. The study uses **500 SWE-bench Verified instances** drawn from
-open-source Python projects (astropy, django, matplotlib, etc.), split into five
+questions about underspecified SWE-bench task descriptions improves its ability to
+resolve issues. The study uses the **SWE-bench Verified** dataset, split into five
 batches of 100 tasks each. Each batch is run under multiple agent
 **settings** (described below), and the resulting trajectories and evaluation
 outputs are collected here for analysis.

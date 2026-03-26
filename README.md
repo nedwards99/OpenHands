@@ -1,9 +1,8 @@
 # Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents
 
-> [!NOTE]
 > **Paper**: [Ask or Assume? Uncertainty-Aware Clarification-Seeking in Coding Agents](https://arxiv.org/abs/PLACEHOLDER)
 >
-> This repository contains the code and evaluation setup for the paper above. We develop and evaluate uncertainty-aware clarification-seeking agents on an underspecified variant of SWE-bench Verified ([Vijayvargiya et al., 2026](https://arxiv.org/abs/2502.13069)), where agents must independently decide when to ask the user clarifying questions to resolve missing information. We use the [OpenHands](https://github.com/All-Hands-AI/OpenHands) agent framework as the execution environment.
+> This repository contains the code and evaluation setup for the paper above. We develop and evaluate uncertainty-aware clarification-seeking agents on an underspecified variant of SWE-bench Verified ([Vijayvargiya et al., 2026](https://arxiv.org/abs/2502.13069)), where agents must independently decide when to ask the user clarifying questions to resolve missing information. We use the [OpenHands](https://github.com/All-Hands-AI/OpenHands) agent framework for agent development and testing.
 
 ## 📋 Overview
 
@@ -27,7 +26,7 @@ We evaluate five experimental settings on the SWE-bench Verified dataset, using 
 | UA-Single | 61.20% |
 | **UA-Multi** | **69.40%** |
 
-Our UA-Multi agent closes the performance gap with agents operating on fully specified instructions, achieving a resolve rate closely matching Full (p = 0.458) and Interactive Baseline (p = 0.621), while significantly outperforming our UA-Single agent (p < 0.001). All p-values are computed from non-parametric permutation tests.
+Our UA-Multi agent closes the performance gap with agents operating on fully specified instructions, achieving a resolve rate closely matching Full (p = 0.458) and Interactive Baseline (p = 0.621), while significantly outperforming our UA-Single agent (p < 0.001). All p-values are computed via non-parametric permutation tests.
 
 ## ⚙️ Setup
 
@@ -66,7 +65,7 @@ The batch ID lists used in the paper are in `evaluation/benchmarks/swe_bench/scr
 
 ## 🚀 Running Experiments
 
-The paper evaluates all five settings on **500 instances split into five batches of 100**. Run each setting once per batch by swapping in the appropriate `selected_ids` list each time. Collect the resulting `output.jsonl` and evaluated `report.json` files under `analysis/final_evaluation_outputs/batch_{1..5}/{setting}/` for use in the analysis step.
+The paper evaluates all five settings on **500 instances** (split into five batches of 100). Run each setting once per batch by swapping in the appropriate `selected_ids` list each time. Collect the resulting `output.jsonl` and evaluated `report.json` files under `analysis/final_evaluation_outputs/batch_{1..5}/{setting}/` for use in the analysis step.
 
 Each evaluation setting has a dedicated inference script. All scripts share the same argument signature:
 
@@ -77,11 +76,11 @@ bash ./evaluation/benchmarks/swe_bench/scripts/<script>.sh \
 
 | Setting | Script | Default agent | Task prompt |
 |---|---|---|---|
-| Full | `scripts/run_infer.sh` | `CodeActAgent` | `swe_default.j2` — standard SWE-bench prompt with fully specified issue |
-| Hidden | `scripts/hidden_run_infer.sh` | `CodeActAgent` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
-| Interactive Baseline | `scripts/interact_run_infer.sh` | `CodeActAgent` | `swe_default_interact.j2` — adds explicit instruction to ask a question before proceeding |
-| UA-Single | `scripts/clarify_v2_interact_run_infer.sh` | `ClarifyAgentV2` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
-| UA-Multi | `scripts/clarify_interact_run_infer.sh` | `ClarifyAgent` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
+| Full | `run_infer.sh` | `CodeActAgent` | `swe_default.j2` — standard SWE-bench prompt with fully specified issue |
+| Hidden | `hidden_run_infer.sh` | `CodeActAgent` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
+| Interactive Baseline | `interact_run_infer.sh` | `CodeActAgent` | `swe_default_interact.j2` — adds explicit instruction to ask a question before proceeding |
+| UA-Single | `clarify_v2_interact_run_infer.sh` | `ClarifyAgentV2` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
+| UA-Multi | `clarify_interact_run_infer.sh` | `ClarifyAgent` | `swe_default.j2` — standard SWE-bench prompt with underspecified issue |
 
 ### Example commands
 
@@ -152,7 +151,7 @@ See [evaluation/benchmarks/swe_bench/README.md](evaluation/benchmarks/swe_bench/
 
 The `analysis/` directory contains scripts to reproduce all tables and figures from the paper. See [analysis/reproduction.md](analysis/reproduction.md) for the full reproduction guide.
 
-`analysis/original_paper_results/` contains the exact tables and figures as they appear in the submitted paper, for reference when checking your reproduction.
+`analysis/original_paper_results/` contains the exact tables and figures as they appear in the submitted paper for reference.
 
 The analysis scripts expect evaluation outputs and trajectories collected across all five batches under `analysis/final_evaluation_outputs/` and `analysis/final_trajectories/` respectively (see [analysis/reproduction.md](analysis/reproduction.md) for the full directory layout).
 
@@ -188,6 +187,10 @@ Key scripts:
 | `analysis/scripts/rebuild_paper_results_from_raw.py` | Produces paper tables and figures from QA artifacts + eval outputs |
 | `analysis/scripts/compute_ask_significance.py` | Computes significance statistics for ask-rate comparisons (optional) |
 | `analysis/qa_scripts/qa_cli.py` | Low-level QA pipeline called internally by `prepare_paper_rebuild_inputs.py` |
+
+## 🙏 Acknowledgements
+
+This work builds on the [OpenHands](https://github.com/All-Hands-AI/OpenHands) agent framework developed by All-Hands-AI. We use the interactive SWE-bench dataset introduced by [Vijayvargiya et al. (2026)](https://arxiv.org/abs/2502.13069) ([dataset](https://huggingface.co/datasets/cmu-lti/interactive-swe), [codebase](https://github.com/sani903/InteractiveSWEAgents)).
 
 ## 📖 Citation
 
