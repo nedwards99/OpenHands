@@ -61,6 +61,7 @@ class Message(BaseModel):
     function_calling_enabled: bool = False
     # - tool calls (from LLM)
     tool_calls: list[ChatCompletionMessageToolCall] | None = None
+    reasoning_content: str | None = None
     # - tool execution result (to LLM)
     tool_call_id: str | None = None
     name: str | None = None  # name of the tool
@@ -146,6 +147,8 @@ class Message(BaseModel):
                 }
                 for tool_call in self.tool_calls
             ]
+        if self.reasoning_content is not None:
+            message_dict['reasoning_content'] = self.reasoning_content
 
         # an observation message with tool response
         if self.tool_call_id is not None:

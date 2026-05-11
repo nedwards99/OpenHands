@@ -327,7 +327,7 @@ class ClarifyAgent(Agent):
             }
             # Restrict tools to Clarify for this turn
             params['tools'] = check_tools([ClarifyTool], self.llm.config)
-            params['tool_choice'] = {'type': 'function', 'function': {'name': ClarifyTool['function']['name']}}
+            #params['tool_choice'] = {'type': 'function', 'function': {'name': ClarifyTool['function']['name']}}
             params['extra_body'] = {
                 'metadata': state.to_llm_metadata(
                     model_name=self.llm.config.model, agent_name=self.name

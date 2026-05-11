@@ -218,10 +218,10 @@ class IntentAgent(Agent):
         }
         #params['tools'] = check_tools(self.tools, self.llm.config)
         params['tools'] = check_tools([ClarifyDecisionTool], self.llm.config)
-        params['tool_choice'] = {
-            'type': 'function',
-            'function': {'name': ClarifyDecisionTool['function']['name']},
-        }
+        # params['tool_choice'] = {
+        #     'type': 'function',
+        #     'function': {'name': ClarifyDecisionTool['function']['name']},
+        # }
         params['extra_body'] = {
             'metadata': state.to_llm_metadata(
                 model_name=self.llm.config.model, agent_name=self.name
