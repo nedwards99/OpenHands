@@ -53,7 +53,7 @@ from openhands.runtime.plugins import (
 )
 from openhands.utils.prompt import PromptManager
 
-REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete."
+REMINDER_MESSAGE = "Carefully check whether all key information is provided. If there's any ambiguity or missing details that could impact the main agent's work you should return `True` for `needs_clarification`. Only skip asking questions when you are absolutely sure all relevant information is complete, or when the user cannot provide any further details or explicitly asks you to keep working on the task."
 SAFE_TYPES = (MessageAction, AgentThinkAction)
 
 class ClarifyAgent(Agent):

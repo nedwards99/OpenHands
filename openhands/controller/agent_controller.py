@@ -509,9 +509,9 @@ class AgentController:
             message_for_delegate: MessageAction | None = None
             if 'prompt' in action.inputs and action.inputs['prompt']:
                 message_for_delegate = MessageAction(content=action.inputs['prompt'])
-                # Hide the delegate message if IntentAgent
-                if action.agent == 'IntentAgent':
-                    message_for_delegate.hidden = True
+                # # Hide the delegate message if IntentAgent
+                # if action.agent == 'IntentAgent':
+                #     message_for_delegate.hidden = True
             elif 'task' in action.inputs and action.inputs['task']:
                 message_for_delegate = MessageAction(
                     content='TASK: ' + action.inputs['task']
